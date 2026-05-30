@@ -1,0 +1,17 @@
+{
+  "name": "sonman",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sonman multi-application platform monorepo",
+  "packageManager": "pnpm@10",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "pnpm -r --if-present run check",
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "lint": "pnpm -r --if-present run lint",
+    "test": "pnpm -r --if-present run test",
+    "typecheck": "pnpm -r --if-present run typecheck"
+  }
+}

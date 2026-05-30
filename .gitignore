@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Build output
+.expo/
+.next/
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+
+# Editor and operating system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,9 @@
+{
+  "name": "@sonman/backend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sonman shared API service",
+  "engines": {
+    "node": ">=22"
+  }
+}

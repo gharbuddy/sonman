@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Sonman Delivery",
+    "slug": "sonman-delivery",
+    "scheme": "sonman-delivery",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "platforms": [
+      "android",
+      "ios"
+    ]
+  }
+}
