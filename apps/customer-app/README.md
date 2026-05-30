@@ -1,18 +1,30 @@
-# Customer App
+# Sonman Customer App
 
-Mobile application for Sonman customers.
+Premium shopping mobile UI for Sonman customers, built with React Native,
+Expo, and TypeScript.
 
-## Planned Stack
+## Included Screens
 
-- React Native
-- Expo
-- TypeScript
-- Supabase Auth
-- Supabase Storage
-- Firebase Cloud Messaging
+Splash, onboarding, login, signup, home, categories, product listing, product
+details, cart, checkout, orders, and profile.
 
-## Configuration
+The initial implementation uses dummy catalog data and local UI state only.
+Backend integration is intentionally out of scope.
 
-Use `.env.example` as the template for local environment values. When
-implementation starts, bootstrap the Expo project in this directory and select
-the Expo-supported React and React Native versions together.
+## Run Locally
+
+From the repository root:
+
+```bash
+corepack pnpm install
+corepack pnpm --filter @sonman/customer-app start
+```
+
+Scan the QR code with Expo Go, or press `a` for an Android emulator. On macOS,
+press `i` for the iOS simulator.
+
+Run the TypeScript check with:
+
+```bash
+corepack pnpm --filter @sonman/customer-app typecheck
+```

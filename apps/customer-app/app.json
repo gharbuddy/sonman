@@ -5,6 +5,12 @@
     "scheme": "sonman-customer",
     "version": "0.0.0",
     "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#070707",
+    "splash": {
+      "backgroundColor": "#070707",
+      "resizeMode": "contain"
+    },
     "platforms": [
       "android",
       "ios"

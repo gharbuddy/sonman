@@ -1,9 +1,8 @@
 # Sonman
 
-Sonman is a multi-application platform organized as a monorepo. This repository
-currently contains project structure, configuration placeholders, environment
-examples, and architecture documentation only. Application source code has not
-been generated yet.
+Sonman is a multi-application platform organized as a monorepo. The customer
+mobile application now includes its initial Expo UI. Other applications remain
+configuration placeholders.
 
 ## Projects
 
@@ -30,5 +29,16 @@ been generated yet.
 
 ## Current Scope
 
-This scaffold deliberately excludes application code, database migrations, and
-deployment manifests. Add those artifacts when implementation begins.
+The customer application includes frontend-only shopping screens with dummy
+data and local navigation. Database migrations, backend integrations, and
+deployment manifests remain out of scope.
+
+## Run Customer App
+
+```bash
+corepack pnpm install
+corepack pnpm --filter @sonman/customer-app start
+```
+
+See [customer app instructions](apps/customer-app/README.md) for emulator and
+typecheck commands.
