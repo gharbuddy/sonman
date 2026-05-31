@@ -2,6 +2,7 @@ import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authService } from "./auth";
+import { createVendorOrdersService, ORDER_STATUS_LABELS, type VendorOrder as Order } from "./orders";
 import { createVendorProductsService, type Category, type VendorProduct as Product } from "./products";
 import {
   Image,
@@ -18,7 +19,6 @@ import {
 } from "react-native";
 
 type Screen = "login" | "dashboard" | "products" | "add" | "edit" | "orders" | "inventory" | "earnings" | "profile";
-type Order = { id: string; customer: string; item: string; amount: number; status: "New" | "Packing" | "Shipped" | "Delivered"; time: string };
 
 const palette = {
   cream: "#F8F6F1", white: "#FFFFFF", sand: "#F0ECE4", line: "#E7E1D8",
@@ -26,8 +26,6 @@ const palette = {
   green: "#267250", greenPale: "#E5F3EB", red: "#D85743", redPale: "#FBE9E5",
   blue: "#43617D", bluePale: "#E5EDF5",
 };
-
-const orders: Order[] = [];
 
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
@@ -40,8 +38,11 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [productError, setProductError] = useState("");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [orderError, setOrderError] = useState("");
   const [selected, setSelected] = useState<Product>();
   const productsService = useMemo(() => createVendorProductsService(authService.supabase), []);
+  const ordersService = useMemo(() => createVendorOrdersService(authService.supabase), []);
 
   const edit = (product: Product) => { setSelected(product); setScreen("edit"); };
   const loadProducts = async () => {
@@ -52,6 +53,14 @@ export default function App() {
       setCategories(nextCategories);
     } catch (cause) {
       setProductError(cause instanceof Error ? cause.message : "Products could not be loaded.");
+    }
+  };
+  const loadOrders = async () => {
+    try {
+      setOrderError("");
+      setOrders(await ordersService.list());
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "Orders could not be loaded.");
     }
   };
 
@@ -72,18 +81,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) void loadProducts();
+    if (authenticated) void Promise.all([loadProducts(), loadOrders()]);
   }, [authenticated]);
 
   if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return (
     <SafeLayout>
-      {screen === "dashboard" && <Dashboard products={products} onNavigate={setScreen} />}
+      {screen === "dashboard" && <Dashboard products={products} orders={orders} onNavigate={setScreen} />}
       {screen === "products" && <Products products={products} error={productError} onAdd={() => setScreen("add")} onEdit={edit} />}
       {screen === "add" && <ProductForm categories={categories} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
       {screen === "edit" && selected && <ProductForm categories={categories} product={selected} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
-      {screen === "orders" && <Orders />}
+      {screen === "orders" && <Orders orders={orders} error={orderError} onAdvance={async (order) => { await ordersService.advance(order.id, order.status); await loadOrders(); }} />}
       {screen === "inventory" && <Inventory products={products} />}
       {screen === "earnings" && <Earnings />}
       {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
@@ -135,7 +144,7 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
   </View>;
 }
 
-function Dashboard({ products, onNavigate }: { products: Product[]; onNavigate: (screen: Screen) => void }) {
+function Dashboard({ products, orders, onNavigate }: { products: Product[]; orders: Order[]; onNavigate: (screen: Screen) => void }) {
   return <ScreenScroll>
     <Header title="Good morning, Aanya" subtitle="Here is what is happening at Urban Edit." />
     <View style={styles.hero}>
@@ -143,7 +152,7 @@ function Dashboard({ products, onNavigate }: { products: Product[]; onNavigate: 
       <Text style={styles.heroBody}>+18.4% from last month</Text><Pressable onPress={() => onNavigate("earnings")}><Text style={styles.heroLink}>View earnings  &gt;</Text></Pressable>
     </View>
     <View style={styles.statGrid}>
-      <StatCard value="28" label="New orders" note="+6 today" color={palette.goldPale} onPress={() => onNavigate("orders")} />
+      <StatCard value={String(orders.filter((order) => order.status === "pending").length)} label="New orders" note={`${orders.length} total`} color={palette.goldPale} onPress={() => onNavigate("orders")} />
       <StatCard value={String(products.length)} label="Products" note="4 live" color={palette.greenPale} onPress={() => onNavigate("products")} />
       <StatCard value="3" label="Low stock" note="Needs action" color={palette.redPale} onPress={() => onNavigate("inventory")} />
       <StatCard value="4.8" label="Store rating" note="126 reviews" color={palette.bluePale} />
@@ -220,8 +229,8 @@ function ProductForm({ product, categories, onBack, onSaved }: { product?: Produ
   </ScreenScroll>;
 }
 
-function Orders() {
-  return <ScreenScroll><Header title="Orders" subtitle="Track and fulfil customer orders." /><View style={styles.chips}>{["All", "New", "Packing", "Shipped"].map((item, index) => <View key={item} style={[styles.chip, index === 0 && styles.chipActive]}><Text style={[styles.chipText, index === 0 && styles.chipTextActive]}>{item}</Text></View>)}</View>{orders.map((order) => <OrderCard key={order.id} order={order} detailed />)}</ScreenScroll>;
+function Orders({ orders, error, onAdvance }: { orders: Order[]; error: string; onAdvance: (order: Order) => Promise<void> }) {
+  return <ScreenScroll><Header title="Orders" subtitle="Track and fulfil customer orders." /><View style={styles.chips}>{["All", "Pending", "Accepted", "Packed", "Ready for Pickup"].map((item, index) => <View key={item} style={[styles.chip, index === 0 && styles.chipActive]}><Text style={[styles.chipText, index === 0 && styles.chipTextActive]}>{item}</Text></View>)}</View>{!!error && <Text style={styles.error}>{error}</Text>}{orders.map((order) => <OrderCard key={order.id} order={order} detailed onAdvance={() => onAdvance(order)} />)}{!orders.length && <Text style={styles.body}>No incoming orders yet.</Text>}</ScreenScroll>;
 }
 
 function Inventory({ products }: { products: Product[] }) {
@@ -262,8 +271,8 @@ function SectionHeader({ title, action, onPress }: { title: string; action?: str
 function StatCard({ value, label, note, color, onPress }: { value: string; label: string; note: string; color: string; onPress?: () => void }) { return <Pressable style={[styles.statCard, { backgroundColor: color }]} onPress={onPress}><Text style={styles.statValue}>{value}</Text><Text style={styles.rowTitle}>{label}</Text><Text style={styles.smallMuted}>{note}</Text></Pressable>; }
 function QuickAction({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) { return <Pressable style={styles.quickAction} onPress={onPress}><View style={styles.quickIcon}><Text style={styles.goldText}>{icon}</Text></View><Text style={styles.quickLabel}>{label}</Text></Pressable>; }
 function ProductCard({ product, onPress, inventory }: { product: Product; onPress?: () => void; inventory?: boolean }) { return <Pressable style={styles.productCard} onPress={onPress}><Image source={{ uri: product.image }} style={styles.productImage} /><View style={styles.flex}><View style={styles.between}><Text style={styles.productCategory}>{product.category}  ·  {product.sku}</Text><StatusBadge status={product.status} /></View><Text style={styles.rowTitle}>{product.name}</Text><View style={styles.between}><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={[styles.stock, product.stock < 8 && styles.stockLow]}>{product.stock} in stock</Text></View>{inventory && <View style={styles.stockBar}><View style={[styles.stockFill, { width: `${Math.min(product.stock * 5, 100)}%` }]} /></View>}</View></Pressable>; }
-function OrderCard({ order, detailed }: { order: Order; detailed?: boolean }) { return <View style={styles.orderCard}><View style={styles.between}><Text style={styles.orderId}>{order.id}</Text><StatusBadge status={order.status} /></View><Text style={styles.rowTitle}>{order.item}</Text><Text style={styles.smallMuted}>{order.customer}  ·  {order.time}</Text><View style={styles.between}><Text style={styles.productPrice}>{money(order.amount)}</Text>{detailed && <Text style={styles.goldText}>View details  &gt;</Text>}</View></View>; }
-function StatusBadge({ status }: { status: string }) { const warning = status === "Low stock" || status === "New"; const calm = status === "Active" || status === "Delivered"; return <Text style={[styles.status, warning && styles.statusWarning, calm && styles.statusCalm]}>{status}</Text>; }
+function OrderCard({ order, detailed, onAdvance }: { order: Order; detailed?: boolean; onAdvance?: () => void }) { return <View style={styles.orderCard}><View style={styles.between}><Text style={styles.orderId}>{order.orderNumber}</Text><StatusBadge status={order.status} /></View><Text style={styles.rowTitle}>{order.item}</Text><Text style={styles.smallMuted}>{order.customer}  ·  {order.time}</Text><View style={styles.between}><Text style={styles.productPrice}>{money(order.amount)}</Text>{detailed && order.status !== "delivered" && <Text style={styles.goldText} onPress={onAdvance}>Advance status  &gt;</Text>}</View></View>; }
+function StatusBadge({ status }: { status: string }) { const label = ORDER_STATUS_LABELS[status] ?? status; const warning = status === "Low stock" || status === "pending"; const calm = status === "Active" || status === "delivered"; return <Text style={[styles.status, warning && styles.statusWarning, calm && styles.statusCalm]}>{label}</Text>; }
 function InfoRow({ label, value }: { label: string; value: string }) { return <View style={styles.infoRow}><Text style={styles.rowTitle}>{label}</Text><Text style={styles.infoValue}>{value}</Text></View>; }
 
 function BottomNav({ screen, onNavigate }: { screen: Screen; onNavigate: (screen: Screen) => void }) {

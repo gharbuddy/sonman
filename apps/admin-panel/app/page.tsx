@@ -25,6 +25,18 @@ type Product = {
   categories: { name: string } | null;
   inventory: { quantity_available: number }[] | null;
 };
+type Order = {
+  id: string;
+  order_number: string;
+  status: string;
+  total_amount: number | string;
+  created_at: string;
+  customers: { users: { full_name: string } | null } | null;
+  vendors: { business_name: string } | null;
+  order_items: { product_name: string; quantity: number }[];
+};
+const statusLabels: Record<string, string> = { pending: "Pending", accepted: "Accepted", packed: "Packed", ready_for_pickup: "Ready for Pickup", picked_up: "Picked Up", out_for_delivery: "Out for Delivery", delivered: "Delivered" };
+const nextStatus: Record<string, string> = { pending: "accepted", accepted: "packed", packed: "ready_for_pickup", ready_for_pickup: "picked_up", picked_up: "out_for_delivery", out_for_delivery: "delivered" };
 
 export default function AdminPanel() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -35,6 +47,8 @@ export default function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [productsError, setProductsError] = useState("");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersError, setOrdersError] = useState("");
 
   const loadProducts = async () => {
     const { data, error: loadError } = await authService.supabase.from("products")
@@ -46,6 +60,17 @@ export default function AdminPanel() {
     }
     setProducts(data as unknown as Product[]);
     setProductsError("");
+  };
+  const loadOrders = async () => {
+    const { data, error: loadError } = await authService.supabase.from("orders")
+      .select("id, order_number, status, total_amount, created_at, customers(users(full_name)), vendors(business_name), order_items(product_name, quantity)")
+      .order("created_at", { ascending: false });
+    if (loadError) {
+      setOrdersError(loadError.message);
+      return;
+    }
+    setOrders(data as unknown as Order[]);
+    setOrdersError("");
   };
 
   useEffect(() => {
@@ -60,7 +85,7 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) void loadProducts();
+    if (authenticated) void Promise.all([loadProducts(), loadOrders()]);
   }, [authenticated]);
 
   const setProductActive = async (product: Product, isActive: boolean) => {
@@ -70,6 +95,16 @@ export default function AdminPanel() {
       return;
     }
     await loadProducts();
+  };
+  const advanceOrder = async (order: Order) => {
+    const status = nextStatus[order.status];
+    if (!status) return;
+    const { error: updateError } = await authService.supabase.rpc("update_order_status", { order_id: order.id, next_status: status });
+    if (updateError) {
+      setOrdersError(updateError.message);
+      return;
+    }
+    await loadOrders();
   };
 
   const login = async (event: FormEvent<HTMLFormElement>) => {
@@ -110,6 +145,32 @@ export default function AdminPanel() {
           <span className="badge cream">SUPABASE READY</span>
           <h1>Sonman admin console</h1>
           <p>Connect the admin session to load live operational data.</p>
+        </div>
+      </section>
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>Incoming orders</h2>
+            <p>Live customer orders and their fulfilment status.</p>
+          </div>
+        </div>
+        {ordersError && <p className="auth-error">{ordersError}</p>}
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Vendor</th><th>Items</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+              {orders.map((order) => <tr key={order.id}>
+                <td><b>{order.order_number}</b></td>
+                <td>{order.customers?.users?.full_name || "Customer"}</td>
+                <td>{order.vendors?.business_name ?? "-"}</td>
+                <td>{order.order_items.map((item) => `${item.quantity} x ${item.product_name}`).join(", ")}</td>
+                <td>Rs {Number(order.total_amount).toLocaleString("en-IN")}</td>
+                <td><span className="badge">{statusLabels[order.status] ?? order.status}</span></td>
+                <td>{nextStatus[order.status] ? <button className="approve" onClick={() => advanceOrder(order)}>Advance status</button> : "-"}</td>
+              </tr>)}
+              {!orders.length && <tr><td colSpan={7}>No incoming orders yet.</td></tr>}
+            </tbody>
+          </table>
         </div>
       </section>
       <section className="card">

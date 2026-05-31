@@ -1,6 +1,7 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authService } from "./auth";
+import { createCustomerOrdersService, ORDER_STATUS_LABELS, type CustomerOrder } from "./orders";
 import { loadActiveProducts, type CustomerProduct as Product } from "./products";
 import {
   Image,
@@ -64,7 +65,11 @@ export default function App() {
   const [productsError, setProductsError] = useState("");
   const [selected, setSelected] = useState<Product>();
   const [category, setCategory] = useState("Trending");
-  const [cart, setCart] = useState<string[]>([]);
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [orderError, setOrderError] = useState("");
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const ordersService = useMemo(() => createCustomerOrdersService(authService.supabase), []);
 
   useEffect(() => {
     const timer = setTimeout(() => setScreen((current) => current === "splash" ? "onboarding" : current), 900);
@@ -93,6 +98,16 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    Promise.all([ordersService.loadCart(), ordersService.listOrders()])
+      .then(([nextCart, nextOrders]) => {
+        setCart(nextCart);
+        setOrders(nextOrders);
+      })
+      .catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Ordering data could not be loaded."));
+  }, [authenticated]);
+
   const openListing = (nextCategory = "Trending") => {
     setCategory(nextCategory);
     setScreen("listing");
@@ -101,12 +116,40 @@ export default function App() {
     setSelected(product);
     setScreen("details");
   };
-  const toggleCart = (id: string) =>
-    setCart((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
-  const cartProducts = products.filter((product) => cart.includes(product.id));
-  const subtotal = cartProducts.reduce((sum, product) => sum + product.price, 0);
+  const setCartQuantity = async (id: string, quantity: number) => {
+    const previous = cart;
+    setOrderError("");
+    setCart((current) => {
+      const next = { ...current };
+      if (quantity > 0) next[id] = quantity;
+      else delete next[id];
+      return next;
+    });
+    try {
+      await ordersService.setCartItem(id, quantity);
+    } catch (cause) {
+      setCart(previous);
+      setOrderError(cause instanceof Error ? cause.message : "Cart could not be updated.");
+    }
+  };
+  const toggleCart = (id: string) => void setCartQuantity(id, cart[id] ? 0 : 1);
+  const placeOrder = async () => {
+    setPlacingOrder(true);
+    setOrderError("");
+    try {
+      await ordersService.placeOrder();
+      setCart({});
+      setOrders(await ordersService.listOrders());
+      setScreen("orders");
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "Order could not be placed.");
+    } finally {
+      setPlacingOrder(false);
+    }
+  };
+  const cartProducts = products.filter((product) => cart[product.id]);
+  const cartCount = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
+  const subtotal = cartProducts.reduce((sum, product) => sum + product.price * cart[product.id], 0);
 
   if (checkingSession || screen === "splash") return <SafeLayout><Splash /></SafeLayout>;
   if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("login")} /></SafeLayout>;
@@ -134,20 +177,20 @@ export default function App() {
       {screen === "details" && selected && (
         <Details
           product={selected}
-          inCart={cart.includes(selected.id)}
+          inCart={!!cart[selected.id]}
           onBack={() => setScreen("listing")}
           onCart={() => toggleCart(selected.id)}
           onBuy={() => {
-            if (!cart.includes(selected.id)) toggleCart(selected.id);
+            if (!cart[selected.id]) toggleCart(selected.id);
             setScreen("cart");
           }}
         />
       )}
-      {screen === "cart" && <Cart items={cartProducts} subtotal={subtotal} onRemove={toggleCart} onCheckout={() => setScreen("checkout")} />}
-      {screen === "checkout" && <Checkout subtotal={subtotal} onBack={() => setScreen("cart")} onPlaceOrder={() => setScreen("orders")} />}
-      {screen === "orders" && <Orders />}
+      {screen === "cart" && <Cart items={cartProducts} quantities={cart} subtotal={subtotal} error={orderError} onQuantity={setCartQuantity} onCheckout={() => setScreen("checkout")} />}
+      {screen === "checkout" && <Checkout subtotal={subtotal} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onPlaceOrder={placeOrder} />}
+      {screen === "orders" && <Orders orders={orders} error={orderError} />}
       {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
-      <BottomNav screen={screen} count={cart.length} onNavigate={setScreen} />
+      <BottomNav screen={screen} count={cartCount} onNavigate={setScreen} />
     </SafeLayout>
   );
 }
@@ -316,40 +359,44 @@ function Details({ product, inCart, onBack, onCart, onBuy }: { product: Product;
   );
 }
 
-function Cart({ items, subtotal, onRemove, onCheckout }: { items: Product[]; subtotal: number; onRemove: (id: string) => void; onCheckout: () => void }) {
+function Cart({ items, quantities, subtotal, error, onQuantity, onCheckout }: { items: Product[]; quantities: Record<string, number>; subtotal: number; error: string; onQuantity: (id: string, quantity: number) => void; onCheckout: () => void }) {
   return (
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your cart</Text>
       <Text style={styles.body}>{items.length} items ready for checkout</Text>
       <View style={styles.deliveryBanner}><Text style={styles.deliveryIcon}>FAST</Text><Text style={styles.deliveryTitle}>You unlocked free delivery</Text></View>
-      {items.map((product) => <CartItem key={product.id} product={product} onRemove={() => onRemove(product.id)} />)}
+      {items.map((product) => <CartItem key={product.id} product={product} quantity={quantities[product.id]} onQuantity={(quantity) => onQuantity(product.id, quantity)} />)}
       {!items.length && <Empty title="Your cart is empty" subtitle="Add a few favourites and they will appear here." />}
+      {!!error && <Text style={styles.authError}>{error}</Text>}
       <OrderTotal subtotal={subtotal} />
       <PrimaryButton label={`Checkout  ·  ${money(subtotal)}`} onPress={onCheckout} disabled={!items.length} />
     </ScreenScroll>
   );
 }
 
-function Checkout({ subtotal, onBack, onPlaceOrder }: { subtotal: number; onBack: () => void; onPlaceOrder: () => void }) {
+function Checkout({ subtotal, busy, error, onBack, onPlaceOrder }: { subtotal: number; busy: boolean; error: string; onBack: () => void; onPlaceOrder: () => void }) {
   return (
     <ScreenScroll>
       <PageHeader title="Checkout" onBack={onBack} />
       <CheckoutSection icon="PIN" title="Delivery address" action="Change"><Text style={styles.rowTitle}>Arjun Mehta</Text><Text style={styles.smallMuted}>24 Park View Road, Bengaluru 560001</Text></CheckoutSection>
-      <CheckoutSection icon="PAY" title="Payment method" action="Change"><Text style={styles.rowTitle}>Visa ending 4242</Text><Text style={styles.smallMuted}>Your payment is secured and encrypted</Text></CheckoutSection>
+      <CheckoutSection icon="PAY" title="Payment method" action="Placeholder"><Text style={styles.rowTitle}>Payment integration pending</Text><Text style={styles.smallMuted}>The order stores a placeholder payment record for now.</Text></CheckoutSection>
       <CheckoutSection icon="BOX" title="Delivery option" action="Edit"><Text style={styles.rowTitle}>Standard delivery</Text><Text style={styles.smallMuted}>Arrives tomorrow · Free</Text></CheckoutSection>
       <OrderTotal subtotal={subtotal} />
-      <PrimaryButton label={`Place order  ·  ${money(subtotal)}`} onPress={onPlaceOrder} />
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal)}`} onPress={onPlaceOrder} disabled={busy || !subtotal} />
     </ScreenScroll>
   );
 }
 
-function Orders() {
+function Orders({ orders, error }: { orders: CustomerOrder[]; error: string }) {
   return (
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your orders</Text>
       <Text style={styles.body}>Track deliveries and revisit past purchases.</Text>
       <View style={styles.tabs}><Text style={styles.tabActive}>Active</Text><Text style={styles.tab}>Past orders</Text></View>
-      <Empty title="No orders yet" subtitle="Your real orders will appear here after checkout." />
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      {orders.map((order) => <View key={order.id} style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{order.orderNumber}</Text><Text style={order.status === "delivered" ? styles.statusDelivered : styles.statusActive}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{order.items.map((item) => `${item.quantity} x ${item.name}`).join(", ")}</Text><Text style={styles.totalPrice}>{money(order.total)}</Text></View>)}
+      {!orders.length && <Empty title="No orders yet" subtitle="Your real orders will appear here after checkout." />}
     </ScreenScroll>
   );
 }
@@ -400,8 +447,8 @@ function ProductCard({ product, onPress, width }: { product: Product; onPress: (
   );
 }
 
-function CartItem({ product, onRemove }: { product: Product; onRemove: () => void }) {
-  return <View style={styles.cartItem}><Image source={{ uri: product.image }} style={styles.cartImage} /><View style={styles.flex}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.rowTitle} numberOfLines={2}>{product.name}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><View style={styles.cartFooter}><Text style={styles.quantity}>−   1   +</Text><Text style={styles.remove} onPress={onRemove}>Remove</Text></View></View></View>;
+function CartItem({ product, quantity, onQuantity }: { product: Product; quantity: number; onQuantity: (quantity: number) => void }) {
+  return <View style={styles.cartItem}><Image source={{ uri: product.image }} style={styles.cartImage} /><View style={styles.flex}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.rowTitle} numberOfLines={2}>{product.name}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><View style={styles.cartFooter}><View style={styles.quantityRow}><Text style={styles.quantity} onPress={() => onQuantity(quantity - 1)}>−</Text><Text style={styles.quantity}>{quantity}</Text><Text style={styles.quantity} onPress={() => onQuantity(quantity + 1)}>+</Text></View><Text style={styles.remove} onPress={() => onQuantity(0)}>Remove</Text></View></View></View>;
 }
 
 function OrderTotal({ subtotal }: { subtotal: number }) {
@@ -483,7 +530,7 @@ const styles = StyleSheet.create({
   filter: { height: 35, justifyContent: "center", paddingHorizontal: 12, marginRight: 7, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, filterText: { color: palette.black, fontSize: 12, fontWeight: "600" }, gridTop: { marginTop: 12 }, productGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 }, productRail: { gap: 10 }, productCard: { width: "48.5%", overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, productImage: { width: "100%", height: 126, backgroundColor: palette.sand }, productCopy: { padding: 8 }, heart: { position: "absolute", right: 6, top: 6, width: 25, height: 25, overflow: "hidden", color: palette.black, textAlign: "center", lineHeight: 23, fontSize: 17, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.92)" }, badge: { position: "absolute", left: 6, bottom: 6, overflow: "hidden", paddingHorizontal: 5, paddingVertical: 3, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 7, backgroundColor: palette.goldPale }, productCategory: { color: palette.muted, fontSize: 12, marginBottom: 2 }, productName: { minHeight: 34, color: palette.black, fontSize: 14, lineHeight: 17, fontWeight: "600" }, ratingLine: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 }, rating: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.white, fontSize: 12, fontWeight: "700", borderRadius: 8, backgroundColor: palette.green }, ratingSmall: { overflow: "hidden", paddingHorizontal: 5, paddingVertical: 2, color: palette.white, fontSize: 12, fontWeight: "700", borderRadius: 7, backgroundColor: palette.green }, reviewCount: { color: palette.muted, fontSize: 12 }, priceLine: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 }, productPrice: { color: palette.black, fontSize: 14, fontWeight: "700" }, oldPrice: { color: palette.muted, fontSize: 14, textDecorationLine: "line-through" }, oldPriceSmall: { color: palette.muted, fontSize: 12, textDecorationLine: "line-through" }, discount: { color: palette.green, fontSize: 12, fontWeight: "700", marginTop: 2 }, delivery: { color: palette.muted, fontSize: 12, marginTop: 4 },
   compactRail: { gap: 9 }, compactProduct: { width: 104, padding: 6, borderWidth: 1, borderColor: palette.line, borderRadius: 12, backgroundColor: palette.white }, compactImage: { width: "100%", height: 78, borderRadius: 8, backgroundColor: palette.sand }, compactName: { minHeight: 30, color: palette.black, fontSize: 12, lineHeight: 15, fontWeight: "600", marginTop: 5 }, compactPrice: { color: palette.black, fontSize: 14, fontWeight: "700", marginTop: 3 }, vendorRail: { gap: 9 }, vendorCard: { width: 112, alignItems: "center", padding: 10, borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, vendorLogo: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24 }, vendorLogoText: { color: palette.black, fontSize: 12, fontWeight: "700" }, vendorName: { color: palette.black, fontSize: 12, fontWeight: "600", marginTop: 7 }, vendorRating: { color: palette.green, fontSize: 12, fontWeight: "600", marginTop: 3 },
   detailImage: { width: "100%", height: 342, borderRadius: 24, backgroundColor: palette.sand }, detailTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700", marginTop: 5 }, detailPrice: { color: palette.black, fontSize: 24, fontWeight: "700" }, deliveryCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 12, borderRadius: 16, backgroundColor: palette.greenPale, marginVertical: 16 }, deliveryIcon: { color: palette.green, fontSize: 12, fontWeight: "700" }, deliveryTitle: { color: palette.green, fontSize: 14, fontWeight: "600" }, sizeRow: { flexDirection: "row", gap: 9, marginTop: 11 }, size: { width: 45, height: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, sizeActive: { borderColor: palette.black, backgroundColor: palette.black }, sizeText: { color: palette.black, fontSize: 14, fontWeight: "600" }, sizeTextActive: { color: palette.white }, actionRow: { flexDirection: "row", gap: 9, marginTop: 20 }, outlineButton: { flex: 1, height: 52, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.black, borderRadius: 16 }, outlineText: { color: palette.black, fontSize: 14, fontWeight: "600" }, darkButton: { flex: 1, height: 52, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.black }, darkButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" },
-  deliveryBanner: { flexDirection: "row", alignItems: "center", gap: 9, padding: 11, borderRadius: 15, backgroundColor: palette.greenPale, marginVertical: 14 }, cartItem: { flexDirection: "row", gap: 12, padding: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, cartImage: { width: 92, height: 110, borderRadius: 13, backgroundColor: palette.sand }, cartFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 }, quantity: { overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, color: palette.black, fontSize: 12, fontWeight: "600", borderRadius: 10, backgroundColor: palette.sand }, remove: { color: palette.red, fontSize: 12, fontWeight: "600" }, total: { gap: 11, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13, marginBottom: 6 }, divider: { height: 1, backgroundColor: palette.line }, totalPrice: { color: palette.black, fontSize: 20, fontWeight: "700" },
+  deliveryBanner: { flexDirection: "row", alignItems: "center", gap: 9, padding: 11, borderRadius: 15, backgroundColor: palette.greenPale, marginVertical: 14 }, cartItem: { flexDirection: "row", gap: 12, padding: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, cartImage: { width: 92, height: 110, borderRadius: 13, backgroundColor: palette.sand }, cartFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 }, quantityRow: { flexDirection: "row", gap: 5 }, quantity: { overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, color: palette.black, fontSize: 12, fontWeight: "600", borderRadius: 10, backgroundColor: palette.sand }, remove: { color: palette.red, fontSize: 12, fontWeight: "600" }, total: { gap: 11, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13, marginBottom: 6 }, divider: { height: 1, backgroundColor: palette.line }, totalPrice: { color: palette.black, fontSize: 20, fontWeight: "700" },
   primaryButton: { minHeight: 55, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderRadius: 17, backgroundColor: palette.black, marginVertical: 6 }, primaryButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, disabled: { opacity: 0.35 }, checkoutCard: { padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, checkoutHeader: { flexDirection: "row", alignItems: "center", gap: 9 }, checkoutIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.sand }, checkoutIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, checkoutBody: { gap: 3, paddingLeft: 43, paddingTop: 8 },
   tabs: { flexDirection: "row", gap: 22, marginTop: 19, borderBottomWidth: 1, borderBottomColor: palette.line }, tab: { color: palette.muted, fontSize: 14, fontWeight: "600", paddingBottom: 10 }, tabActive: { color: palette.black, fontSize: 14, fontWeight: "700", paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: palette.gold }, orderCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13 }, orderTitle: { marginTop: 9 }, statusActive: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.goldPale }, statusDelivered: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.green, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.greenPale }, orderImages: { flexDirection: "row", gap: 7, marginTop: 10 }, orderImage: { width: 52, height: 56, borderRadius: 10 }, progress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.line, marginTop: 14 }, progressDone: { width: "68%", height: 5, borderRadius: 3, backgroundColor: palette.gold }, track: { minHeight: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, marginTop: 13 }, trackText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 19, backgroundColor: palette.white, marginTop: 15 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 12, fontWeight: "600", marginTop: 22, marginBottom: 6 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, profileIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.white }, profileIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 },

@@ -4,8 +4,8 @@ create type public.user_role as enum ('customer', 'vendor', 'delivery_partner', 
 create type public.approval_status as enum ('pending', 'approved', 'rejected', 'suspended');
 create type public.delivery_availability as enum ('offline', 'available', 'busy');
 create type public.order_status as enum (
-  'pending_payment', 'placed', 'confirmed', 'preparing',
-  'ready_for_pickup', 'out_for_delivery', 'delivered', 'cancelled'
+  'pending', 'accepted', 'packed', 'ready_for_pickup',
+  'picked_up', 'out_for_delivery', 'delivered'
 );
 create type public.payment_status as enum ('pending', 'authorized', 'captured', 'failed', 'cancelled', 'refunded');
 create type public.delivery_assignment_status as enum ('assigned', 'accepted', 'picked_up', 'delivered', 'rejected', 'cancelled');
@@ -132,7 +132,7 @@ create table public.orders (
   order_number text not null unique,
   customer_id uuid not null references public.customers(id),
   vendor_id uuid not null references public.vendors(id),
-  status public.order_status not null default 'pending_payment',
+  status public.order_status not null default 'pending',
   currency char(3) not null,
   subtotal_amount numeric(12, 2) not null check (subtotal_amount >= 0),
   delivery_fee_amount numeric(12, 2) not null default 0 check (delivery_fee_amount >= 0),
