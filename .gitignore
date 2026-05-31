@@ -22,3 +22,23 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+# Supabase
+supabase/.temp/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env.production
+.env.development
+
+# Expo
+.expo-shared/
+
+# Turborepo
+.turbo/
+
+# PNPM
+.pnpm-store/
