@@ -188,6 +188,20 @@ export default function AdminPanel() {
       <section className="card">
         <div className="card-head">
           <div>
+            <h2>Replacement requests</h2>
+            <p>Requests for damaged, defective, or incorrect products reported at delivery will appear here.</p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Issue</th><th>Reported at</th><th>Status</th></tr></thead>
+            <tbody><tr><td colSpan={5}>No replacement requests yet.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+      <section className="card">
+        <div className="card-head">
+          <div>
             <h2>Incoming orders</h2>
             <p>Live customer orders and their fulfilment status.</p>
           </div>

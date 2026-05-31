@@ -247,6 +247,12 @@ Customer order with pricing and delivery snapshots captured at checkout.
 | `discount_amount` | `numeric(12,2)` | Not null, default `0`, check `>= 0` | |
 | `total_amount` | `numeric(12,2)` | Not null, check `>= 0` | |
 | `delivery_address` | `jsonb` | Not null | Snapshot of checkout address |
+| `payment_method` | `text` | Not null, default `online` | Prepaid online payment only |
+| `payment_status` | `text` | Not null, default `pending` | Order-level payment summary |
+| `cancellation_allowed_until_status` | `text` | Not null, default `pending` | Cancellation closes after order confirmation |
+| `replacement_eligible` | `boolean` | Not null, default `true` | Replacement may be requested for an eligible delivery issue |
+| `replacement_reported_at` | `timestamptz` | | Delivery-time issue report timestamp |
+| `policy_acknowledged_at` | `timestamptz` | Not null | Customer prepaid-policy acknowledgement |
 | `customer_notes` | `text` | | |
 | `placed_at` | `timestamptz` | | |
 | `cancelled_at` | `timestamptz` | | |
