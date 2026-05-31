@@ -1,9 +1,14 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
+import * as Linking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { UserProfile } from "@sonman/auth-service";
+import { NotificationHistoryScreen, NotificationSettingsScreen, usePushNotifications } from "@sonman/notifications-service";
 import { authService } from "./auth";
 import { createCustomerOrdersService, ORDER_STATUS_LABELS, type CustomerOrder } from "./orders";
 import { loadActiveProducts, type CustomerProduct as Product } from "./products";
 import { formatDeliveryDate, quoteDelivery } from "./delivery";
+import { addressText, createCustomerProfileService, initials, type AddressInput, type CustomerAddress } from "./profile";
 import {
   Image,
   Platform,
@@ -30,7 +35,12 @@ type Screen =
   | "cart"
   | "checkout"
   | "orders"
-  | "profile";
+  | "profile"
+  | "edit-profile"
+  | "addresses"
+  | "address-form"
+  | "notifications"
+  | "notification-settings";
 
 const palette = {
   cream: "#F8F6F1",
@@ -58,6 +68,7 @@ const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
 const BOTTOM_NAV_HEIGHT = 68;
 const BOTTOM_SAFE_SPACE = Platform.OS === "android" ? 36 : 18;
 const CHECKOUT_DISTANCE_KM = 0;
+WebBrowser.maybeCompleteAuthSession();
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
@@ -71,7 +82,18 @@ export default function App() {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [orderError, setOrderError] = useState("");
   const [placingOrder, setPlacingOrder] = useState(false);
+  const [profile, setProfile] = useState<UserProfile>();
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
+  const [editingAddress, setEditingAddress] = useState<CustomerAddress>();
   const ordersService = useMemo(() => createCustomerOrdersService(authService.supabase), []);
+  const profileService = useMemo(() => createCustomerProfileService(authService.supabase), []);
+  const defaultAddress = addresses.find((address) => address.isDefault);
+  usePushNotifications(authService.supabase, authenticated, "customer");
+  const loadProfile = async () => {
+    const [nextProfile, nextAddresses] = await Promise.all([profileService.getProfile(), profileService.listAddresses()]);
+    setProfile(nextProfile);
+    setAddresses(nextAddresses);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => setScreen((current) => current === "splash" ? "onboarding" : current), 900);
@@ -102,7 +124,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
-    Promise.all([ordersService.loadCart(), ordersService.listOrders()])
+    Promise.all([ordersService.loadCart(), ordersService.listOrders(), loadProfile()])
       .then(([nextCart, nextOrders]) => {
         setCart(nextCart);
         setOrders(nextOrders);
@@ -151,7 +173,13 @@ export default function App() {
     setPlacingOrder(true);
     setOrderError("");
     try {
-      await ordersService.placeOrder(CHECKOUT_DISTANCE_KM);
+      if (!defaultAddress) throw new Error("Add a default delivery address before placing your order.");
+      await ordersService.placeOrder({
+        id: defaultAddress.id,
+        label: defaultAddress.label,
+        recipient_name: defaultAddress.recipientName,
+        address: addressText(defaultAddress),
+      }, CHECKOUT_DISTANCE_KM);
       setCart({});
       setOrders(await ordersService.listOrders());
       setScreen("orders");
@@ -186,7 +214,7 @@ export default function App() {
 
   return (
     <SafeLayout>
-      {screen === "home" && <Home products={products} productsError={productsError} onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
+      {screen === "home" && <Home profile={profile} address={defaultAddress} products={products} productsError={productsError} onAddresses={() => setScreen("addresses")} onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
       {screen === "categories" && <Categories onBack={() => setScreen("home")} onCategory={openListing} />}
       {screen === "listing" && <Listing products={products} category={category} onBack={() => setScreen("home")} onProduct={openProduct} />}
       {screen === "details" && selected && (
@@ -202,9 +230,14 @@ export default function App() {
         />
       )}
       {screen === "cart" && <Cart items={cartProducts} quantities={cart} subtotal={subtotal} error={orderError} onQuantity={setCartQuantity} onCheckout={() => setScreen("checkout")} />}
-      {screen === "checkout" && <Checkout subtotal={subtotal} quote={deliveryQuote} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onPlaceOrder={placeOrder} />}
+      {screen === "checkout" && <Checkout address={defaultAddress} subtotal={subtotal} quote={deliveryQuote} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onAddresses={() => setScreen("addresses")} onPlaceOrder={placeOrder} />}
       {screen === "orders" && <Orders orders={orders} error={orderError} />}
-      {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+      {screen === "profile" && <Profile profile={profile} onEdit={() => setScreen("edit-profile")} onAddresses={() => setScreen("addresses")} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+      {screen === "edit-profile" && profile && <EditProfile profile={profile} onBack={() => setScreen("profile")} onSaved={(next) => { setProfile(next); setScreen("profile"); }} />}
+      {screen === "addresses" && <Addresses addresses={addresses} onBack={() => setScreen("profile")} onAdd={() => { setEditingAddress(undefined); setScreen("address-form"); }} onEdit={(address) => { setEditingAddress(address); setScreen("address-form"); }} onDelete={async (id) => { await profileService.deleteAddress(id); await loadProfile(); }} onDefault={async (id) => { await profileService.setDefaultAddress(id); await loadProfile(); }} />}
+      {screen === "address-form" && <AddressForm address={editingAddress} onBack={() => setScreen("addresses")} onSaved={async () => { await loadProfile(); setScreen("addresses"); }} />}
+      {screen === "notifications" && <NotificationHistoryScreen supabase={authService.supabase} onBack={() => setScreen("profile")} />}
+      {screen === "notification-settings" && <NotificationSettingsScreen supabase={authService.supabase} app="customer" onBack={() => setScreen("profile")} />}
       <BottomNav screen={screen} count={cartCount} onNavigate={setScreen} />
     </SafeLayout>
   );
@@ -265,6 +298,25 @@ function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; o
       setBusy(false);
     }
   };
+  const google = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const redirectTo = Linking.createURL("auth/callback");
+      const url = await authService.beginGoogleLogin(redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(url, redirectTo);
+      if (result.type !== "success") {
+        if (result.type !== "cancel") setError("Google sign in was not completed.");
+        return;
+      }
+      await authService.completeOAuthLogin(result.url, "customer");
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Google sign in failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <ScreenShell contentContainerStyle={styles.auth}>
         <Text style={styles.logo}>sonman</Text>
@@ -272,6 +324,8 @@ function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; o
           <Text style={styles.authTitle}>{signup ? "Create your account" : "Welcome back"}</Text>
           <Text style={styles.body}>{signup ? "Save picks, track orders, and checkout faster." : "Sign in to continue your shopping journey."}</Text>
         </View>
+        <PrimaryButton label={busy ? "Please wait..." : "Continue with Google"} onPress={google} disabled={busy} />
+        <Text style={styles.authDivider}>OR CONTINUE WITH EMAIL</Text>
         {signup && <Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} />}
         <Field label="Email address" placeholder="name@example.com" value={email} onChange={setEmail} />
         <Field label="Password" placeholder="Enter password" secure value={password} onChange={setPassword} />
@@ -283,7 +337,7 @@ function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; o
   );
 }
 
-function Home({ products, productsError, onCategories, onListing, onProduct }: { products: Product[]; productsError: string; onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
+function Home({ profile, address, products, productsError, onAddresses, onCategories, onListing, onProduct }: { profile?: UserProfile; address?: CustomerAddress; products: Product[]; productsError: string; onAddresses: () => void; onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
   const { width } = useWindowDimensions();
   const contentWidth = width - (width < 360 ? 24 : 28);
   const cardWidth = Math.floor((contentWidth - 10) / 2);
@@ -291,10 +345,10 @@ function Home({ products, productsError, onCategories, onListing, onProduct }: {
   return (
     <ScreenShell contentContainerStyle={width < 360 ? styles.screenCompact : undefined}>
       <View style={styles.searchDock}>
-        <View style={styles.marketHeader}><Text style={styles.logo}>sonman</Text><Pressable style={styles.avatarSmall}><Text style={styles.avatarSmallText}>AM</Text></Pressable></View>
+        <View style={styles.marketHeader}><Text style={styles.logo}>sonman</Text><Pressable style={styles.avatarSmall}><Text style={styles.avatarSmallText}>{initials(profile?.full_name ?? "")}</Text></Pressable></View>
         <SearchBar />
       </View>
-      <Pressable style={styles.location}><Text style={styles.locationIcon}>PIN</Text><View style={styles.flex}><Text style={styles.locationLabel}>Deliver to Arjun</Text><Text style={styles.locationText}>Park View Road, Bengaluru 560001</Text></View><Text style={styles.chevron}>v</Text></Pressable>
+      <Pressable style={styles.location} onPress={onAddresses}><Text style={styles.locationIcon}>PIN</Text><View style={styles.flex}><Text style={styles.locationLabel}>{address ? `Deliver to ${address.recipientName}` : "Add a delivery address"}</Text><Text style={styles.locationText}>{address ? addressText(address) : "Choose where your Sonman order should arrive."}</Text></View><Text style={styles.chevron}>v</Text></Pressable>
       <Pressable style={styles.aiPill}>
         <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI</Text></View>
         <View style={styles.flex}><Text style={styles.aiTitle}>Ask Sonman AI</Text><Text style={styles.tinyMuted}>Tell us what you need. We will narrow it down.</Text></View>
@@ -389,12 +443,12 @@ function Cart({ items, quantities, subtotal, error, onQuantity, onCheckout }: { 
   );
 }
 
-function Checkout({ subtotal, quote, busy, error, onBack, onPlaceOrder }: { subtotal: number; quote: ReturnType<typeof quoteDelivery>; busy: boolean; error: string; onBack: () => void; onPlaceOrder: () => void }) {
+function Checkout({ address, subtotal, quote, busy, error, onBack, onAddresses, onPlaceOrder }: { address?: CustomerAddress; subtotal: number; quote: ReturnType<typeof quoteDelivery>; busy: boolean; error: string; onBack: () => void; onAddresses: () => void; onPlaceOrder: () => void }) {
   const [policyAccepted, setPolicyAccepted] = useState(false);
   return (
     <ScreenScroll>
       <PageHeader title="Checkout" onBack={onBack} />
-      <CheckoutSection icon="PIN" title="Delivery address" action="Change"><Text style={styles.rowTitle}>Arjun Mehta</Text><Text style={styles.smallMuted}>24 Park View Road, Bengaluru 560001</Text></CheckoutSection>
+      <CheckoutSection icon="PIN" title="Delivery address" action={address ? "Change" : "Add"} onAction={onAddresses}><Text style={styles.rowTitle}>{address?.recipientName ?? "No default address selected"}</Text><Text style={styles.smallMuted}>{address ? addressText(address) : "Add a saved address before placing your order."}</Text></CheckoutSection>
       <CheckoutSection icon="PAY" title="Payment method" action="Prepaid"><Text style={styles.rowTitle}>Online Payment Only</Text><Text style={styles.smallMuted}>Payment integration is pending. The order stores a placeholder payment record for now.</Text></CheckoutSection>
       <CheckoutSection icon="BOX" title="Delivery option" action={`Zone ${quote.zone}`}><Text style={styles.rowTitle}>Standard delivery</Text><Text style={styles.smallMuted}>Expected by {formatDeliveryDate(quote.expectedDate)}</Text><Text style={styles.smallMuted}>{quote.fee === null ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(quote.fee)}`}</Text></CheckoutSection>
       <OrderTotal subtotal={subtotal} deliveryFee={quote.fee} />
@@ -403,7 +457,7 @@ function Checkout({ subtotal, quote, busy, error, onBack, onPlaceOrder }: { subt
         <Text style={styles.policyText}>I understand this order is prepaid. Cancellation is not allowed after order confirmation. Replacement is allowed only for damaged, defective, or incorrect products reported at delivery.</Text>
       </Pressable>
       {!!error && <Text style={styles.authError}>{error}</Text>}
-      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal + (quote.fee ?? 0))}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted} />
+      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal + (quote.fee ?? 0))}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted || !address} />
     </ScreenScroll>
   );
 }
@@ -421,21 +475,68 @@ function Orders({ orders, error }: { orders: CustomerOrder[]; error: string }) {
   );
 }
 
-function Profile({ onLogout }: { onLogout: () => void }) {
+function Profile({ profile, onEdit, onAddresses, onNotifications, onNotificationSettings, onLogout }: { profile?: UserProfile; onEdit: () => void; onAddresses: () => void; onNotifications: () => void; onNotificationSettings: () => void; onLogout: () => void }) {
   return (
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your profile</Text>
-      <View style={styles.profileCard}><View style={styles.avatar}><Text style={styles.avatarText}>AM</Text></View><View style={styles.flex}><Text style={styles.profileName}>Arjun Mehta</Text><Text style={styles.smallMuted}>arjun@example.com</Text><Text style={styles.member}>GOLD MEMBER</Text></View><Text style={styles.arrow}>›</Text></View>
+      <Pressable style={styles.profileCard} onPress={onEdit}><View style={styles.avatar}><Text style={styles.avatarText}>{initials(profile?.full_name ?? "")}</Text></View><View style={styles.flex}><Text style={styles.profileName}>{profile?.full_name || "Customer"}</Text><Text style={styles.smallMuted}>{profile?.email ?? ""}</Text></View><Text style={styles.arrow}>›</Text></Pressable>
       <Text style={styles.profileLabel}>ACCOUNT</Text>
-      <ProfileRow icon="PIN" title="Saved addresses" subtitle="Home, work, and more" />
-      <ProfileRow icon="PAY" title="Payments" subtitle="Cards, UPI, and wallets" />
-      <ProfileRow icon="♡" title="Wishlist" subtitle="12 saved products" />
+      <ProfileRow icon="PIN" title="Saved addresses" subtitle="Add, edit, or choose your default" onPress={onAddresses} />
+      <ProfileRow icon="NOT" title="Notifications" subtitle="View your notification history" onPress={onNotifications} />
       <Text style={styles.profileLabel}>SUPPORT</Text>
       <ProfileRow icon="?" title="Help centre" subtitle="Orders, refunds, and support" />
-      <ProfileRow icon="SET" title="Settings" subtitle="Notifications and privacy" />
+      <ProfileRow icon="SET" title="Notification settings" subtitle="Choose which push alerts you receive" onPress={onNotificationSettings} />
       <Text style={styles.signOut} onPress={onLogout}>Sign out</Text>
     </ScreenScroll>
   );
+}
+
+function EditProfile({ profile, onBack, onSaved }: { profile: UserProfile; onBack: () => void; onSaved: (profile: UserProfile) => void }) {
+  const [fullName, setFullName] = useState(profile.full_name);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!fullName.trim()) return setError("Enter your full name.");
+    setBusy(true);
+    setError("");
+    try {
+      onSaved(await authService.updateProfile(fullName));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Profile could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <ScreenScroll><PageHeader title="Edit profile" onBack={onBack} /><Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} /><Field label="Email address" placeholder="" value={profile.email ?? ""} />{!!error && <Text style={styles.authError}>{error}</Text>}<PrimaryButton label={busy ? "Saving..." : "Save profile"} onPress={save} disabled={busy} /></ScreenScroll>;
+}
+
+function Addresses({ addresses, onBack, onAdd, onEdit, onDelete, onDefault }: { addresses: CustomerAddress[]; onBack: () => void; onAdd: () => void; onEdit: (address: CustomerAddress) => void; onDelete: (id: string) => Promise<void>; onDefault: (id: string) => Promise<void> }) {
+  const [error, setError] = useState("");
+  const run = async (action: () => Promise<void>) => {
+    try { setError(""); await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Address could not be updated."); }
+  };
+  return <ScreenScroll><PageHeader title="Saved addresses" onBack={onBack} /><PrimaryButton label="Add address" onPress={onAdd} />{!!error && <Text style={styles.authError}>{error}</Text>}{addresses.map((address) => <View key={address.id} style={styles.addressCard}><View style={styles.between}><Text style={styles.rowTitle}>{address.label}{address.isDefault ? "  DEFAULT" : ""}</Text><Text style={styles.link} onPress={() => onEdit(address)}>Edit</Text></View><Text style={styles.smallMuted}>{address.recipientName}</Text><Text style={styles.smallMuted}>{addressText(address)}</Text><View style={styles.addressActions}>{!address.isDefault && <Text style={styles.link} onPress={() => void run(() => onDefault(address.id))}>Set default</Text>}<Text style={styles.remove} onPress={() => void run(() => onDelete(address.id))}>Delete</Text></View></View>)}{!addresses.length && <Empty title="No saved addresses" subtitle="Add an address to use it automatically at checkout." />}</ScreenScroll>;
+}
+
+function AddressForm({ address, onBack, onSaved }: { address?: CustomerAddress; onBack: () => void; onSaved: () => Promise<void> }) {
+  const [input, setInput] = useState<AddressInput>({ label: address?.label ?? "", recipientName: address?.recipientName ?? "", line1: address?.line1 ?? "", line2: address?.line2 ?? "", city: address?.city ?? "", state: address?.state ?? "", postalCode: address?.postalCode ?? "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = (key: keyof AddressInput) => (value: string) => setInput((current) => ({ ...current, [key]: value }));
+  const save = async () => {
+    if (!input.label.trim() || !input.recipientName.trim() || !input.line1.trim() || !input.city.trim() || !input.state.trim() || !input.postalCode.trim()) return setError("Complete all required address fields.");
+    setBusy(true);
+    setError("");
+    try {
+      await createCustomerProfileService(authService.supabase).saveAddress(input, address?.id);
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Address could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <ScreenScroll><PageHeader title={address ? "Edit address" : "Add address"} onBack={onBack} /><Field label="Label" placeholder="Home or Work" value={input.label} onChange={set("label")} /><Field label="Recipient name" placeholder="Full name" value={input.recipientName} onChange={set("recipientName")} /><Field label="Address line 1" placeholder="House, building, street" value={input.line1} onChange={set("line1")} /><Field label="Address line 2" placeholder="Area or landmark (optional)" value={input.line2} onChange={set("line2")} /><Field label="City" placeholder="City" value={input.city} onChange={set("city")} /><Field label="State" placeholder="State" value={input.state} onChange={set("state")} /><Field label="Postal code" placeholder="Postal code" value={input.postalCode} onChange={set("postalCode")} />{!!error && <Text style={styles.authError}>{error}</Text>}<PrimaryButton label={busy ? "Saving..." : "Save address"} onPress={save} disabled={busy} /></ScreenScroll>;
 }
 
 function SearchBar({ placeholder = "Search products, brands, and more" }: { placeholder?: string }) {
@@ -479,12 +580,12 @@ function OrderCard({ title, code, products: items, active }: { title: string; co
   return <View style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{code}</Text><Text style={active ? styles.statusActive : styles.statusDelivered}>{active ? "IN TRANSIT" : "DELIVERED"}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{title}</Text><View style={styles.orderImages}>{items.map((item) => <Image key={item.id} source={{ uri: item.image }} style={styles.orderImage} />)}</View>{active && <View style={styles.progress}><View style={styles.progressDone} /></View>}<Pressable style={styles.track}><Text style={styles.trackText}>{active ? "Track order" : "View order details"}</Text></Pressable></View>;
 }
 
-function CheckoutSection({ icon, title, action, children }: { icon: string; title: string; action: string; children: ReactNode }) {
-  return <View style={styles.checkoutCard}><View style={styles.checkoutHeader}><View style={styles.checkoutIcon}><Text style={styles.checkoutIconText}>{icon}</Text></View><Text style={styles.rowTitle}>{title}</Text><Text style={[styles.link, styles.flexEnd]}>{action}</Text></View><View style={styles.checkoutBody}>{children}</View></View>;
+function CheckoutSection({ icon, title, action, onAction, children }: { icon: string; title: string; action: string; onAction?: () => void; children: ReactNode }) {
+  return <View style={styles.checkoutCard}><View style={styles.checkoutHeader}><View style={styles.checkoutIcon}><Text style={styles.checkoutIconText}>{icon}</Text></View><Text style={styles.rowTitle}>{title}</Text><Text style={[styles.link, styles.flexEnd]} onPress={onAction}>{action}</Text></View><View style={styles.checkoutBody}>{children}</View></View>;
 }
 
-function ProfileRow({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
-  return <Pressable style={styles.profileRow}><View style={styles.profileIcon}><Text style={styles.profileIconText}>{icon}</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.smallMuted}>{subtitle}</Text></View><Text style={styles.arrow}>›</Text></Pressable>;
+function ProfileRow({ icon, title, subtitle, onPress }: { icon: string; title: string; subtitle: string; onPress?: () => void }) {
+  return <Pressable style={styles.profileRow} onPress={onPress}><View style={styles.profileIcon}><Text style={styles.profileIconText}>{icon}</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.smallMuted}>{subtitle}</Text></View><Text style={styles.arrow}>›</Text></Pressable>;
 }
 
 function PageHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: string }) {
@@ -539,7 +640,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 }, flexEnd: { marginLeft: "auto" }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, alignRight: { textAlign: "right" },
   splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.cream }, brandMark: { width: 72, height: 72, borderRadius: 25, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16 }, brandMarkText: { color: palette.goldPale, fontSize: 38, fontWeight: "700" }, logo: { color: palette.black, fontSize: 24, fontWeight: "700" }, splashTag: { color: palette.muted, fontSize: 12, marginTop: 8 },
   onboarding: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22 }, onboardingVisual: { height: "43%", overflow: "hidden", borderRadius: 30, backgroundColor: palette.sand }, fillImage: { width: "100%", height: "100%" }, floatingNote: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 8, alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.94)" }, noteText: { color: palette.black, fontSize: 12, fontWeight: "600" }, onboardingTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, dots: { color: palette.gold, textAlign: "center", marginVertical: 12, letterSpacing: 4 },
-  auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
+  auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, authDivider: { color: palette.muted, textAlign: "center", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
   screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, paddingBottom: BOTTOM_NAV_HEIGHT + BOTTOM_SAFE_SPACE + 24, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
   searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, mic: { color: palette.gold, fontSize: 12, fontWeight: "600" },
   searchDock: { marginHorizontal: -14, paddingHorizontal: 14, backgroundColor: palette.cream }, location: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, marginBottom: 8 }, locationIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, locationLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, locationText: { color: palette.muted, fontSize: 12, marginTop: 1 }, chevron: { color: palette.muted, fontSize: 15, fontWeight: "600" }, aiPill: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 15, backgroundColor: palette.goldPale, marginBottom: 11 }, aiBadge: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.white }, aiBadgeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, aiTitle: { color: palette.black, fontSize: 14, fontWeight: "600" }, arrow: { color: palette.muted, fontSize: 29, lineHeight: 30 }, horizontal: { marginBottom: 13 }, chip: { height: 39, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, marginRight: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white }, chipIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, chipText: { color: palette.black, fontSize: 12, fontWeight: "600" },
@@ -553,6 +654,6 @@ const styles = StyleSheet.create({
   deliveryBanner: { flexDirection: "row", alignItems: "center", gap: 9, padding: 11, borderRadius: 15, backgroundColor: palette.greenPale, marginVertical: 14 }, cartItem: { flexDirection: "row", gap: 12, padding: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, cartImage: { width: 92, height: 110, borderRadius: 13, backgroundColor: palette.sand }, cartFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 }, quantityRow: { flexDirection: "row", gap: 5 }, quantity: { overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, color: palette.black, fontSize: 12, fontWeight: "600", borderRadius: 10, backgroundColor: palette.sand }, remove: { color: palette.red, fontSize: 12, fontWeight: "600" }, total: { gap: 11, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13, marginBottom: 6 }, divider: { height: 1, backgroundColor: palette.line }, totalPrice: { color: palette.black, fontSize: 20, fontWeight: "700" },
   primaryButton: { minHeight: 55, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderRadius: 17, backgroundColor: palette.black, marginVertical: 6 }, primaryButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, disabled: { opacity: 0.35 }, checkoutCard: { padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, checkoutHeader: { flexDirection: "row", alignItems: "center", gap: 9 }, checkoutIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.sand }, checkoutIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, checkoutBody: { gap: 3, paddingLeft: 43, paddingTop: 8 }, policyRow: { flexDirection: "row", gap: 10, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginVertical: 8 }, checkbox: { width: 20, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.gold, borderRadius: 5 }, checkboxChecked: { backgroundColor: palette.gold }, checkboxMark: { color: palette.white, fontSize: 14, fontWeight: "700" }, policyText: { flex: 1, color: palette.muted, fontSize: 12, lineHeight: 18 }, policyLabel: { color: palette.gold, fontSize: 12, fontWeight: "700", marginTop: 10 },
   tabs: { flexDirection: "row", gap: 22, marginTop: 19, borderBottomWidth: 1, borderBottomColor: palette.line }, tab: { color: palette.muted, fontSize: 14, fontWeight: "600", paddingBottom: 10 }, tabActive: { color: palette.black, fontSize: 14, fontWeight: "700", paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: palette.gold }, orderCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13 }, orderTitle: { marginTop: 9 }, statusActive: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.goldPale }, statusDelivered: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.green, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.greenPale }, orderImages: { flexDirection: "row", gap: 7, marginTop: 10 }, orderImage: { width: 52, height: 56, borderRadius: 10 }, progress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.line, marginTop: 14 }, progressDone: { width: "68%", height: 5, borderRadius: 3, backgroundColor: palette.gold }, track: { minHeight: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, marginTop: 13 }, trackText: { color: palette.black, fontSize: 12, fontWeight: "600" },
-  profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 19, backgroundColor: palette.white, marginTop: 15 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 12, fontWeight: "600", marginTop: 22, marginBottom: 6 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, profileIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.white }, profileIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 },
+  profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 19, backgroundColor: palette.white, marginTop: 15 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 12, fontWeight: "600", marginTop: 22, marginBottom: 6 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, profileIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.white }, profileIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 }, addressCard: { gap: 4, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 10 }, addressActions: { flexDirection: "row", gap: 18, marginTop: 8 },
   empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 0, right: 0, bottom: BOTTOM_SAFE_SPACE, height: BOTTOM_NAV_HEIGHT, zIndex: 100, flexDirection: "row", alignItems: "center", paddingTop: 8, paddingBottom: 8, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.white }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 12, lineHeight: 14, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 12, fontWeight: "600" }, navActive: { color: palette.black }, navIndicator: { width: 4, height: 4, borderRadius: 2, backgroundColor: palette.gold }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
 });

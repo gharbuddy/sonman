@@ -68,7 +68,18 @@ export function createAuthService(options: AuthServiceOptions) {
     return data as UserProfile;
   };
 
+  const syncProfile = async (session: Session) => {
+    const metadata = session.user.user_metadata;
+    const fullName = String(metadata.full_name ?? metadata.name ?? "").trim();
+    const { error } = await supabase.rpc("sync_authenticated_profile", {
+      profile_email: session.user.email ?? null,
+      profile_full_name: fullName,
+    });
+    if (error) throw error;
+  };
+
   const requireRole = async (session: Session, expectedRole: UserRole) => {
+    await syncProfile(session);
     const profile = await getProfile(session.user.id);
     if (!profile.is_active) {
       await supabase.auth.signOut();
@@ -83,6 +94,13 @@ export function createAuthService(options: AuthServiceOptions) {
 
   return {
     supabase,
+    async getCurrentProfile() {
+      requireConfiguration();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      if (!user) throw new AuthAccessError("Sign in to view your profile.");
+      return getProfile(user.id);
+    },
     async restoreSession(expectedRole: UserRole) {
       requireConfiguration();
       const { data, error } = await supabase.auth.getSession();
@@ -94,6 +112,39 @@ export function createAuthService(options: AuthServiceOptions) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       if (!data.session) throw new AuthAccessError("Supabase did not create a session.");
+      return requireRole(data.session, expectedRole);
+    },
+    async beginGoogleLogin(redirectTo: string) {
+      requireConfiguration();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      return data.url;
+    },
+    async completeOAuthLogin(callbackUrl: string, expectedRole: UserRole) {
+      requireConfiguration();
+      const url = new URL(callbackUrl);
+      const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+      const code = url.searchParams.get("code");
+      if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) throw error;
+        if (!data.session) throw new AuthAccessError("Supabase did not create a Google session.");
+        return requireRole(data.session, expectedRole);
+      }
+      const accessToken = hash.get("access_token");
+      const refreshToken = hash.get("refresh_token");
+      if (!accessToken || !refreshToken) {
+        throw new AuthAccessError(hash.get("error_description") ?? "Google sign in was not completed.");
+      }
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) throw error;
+      if (!data.session) throw new AuthAccessError("Supabase did not create a Google session.");
       return requireRole(data.session, expectedRole);
     },
     async register(input: RegisterInput) {
@@ -109,6 +160,23 @@ export function createAuthService(options: AuthServiceOptions) {
     async logout() {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+    },
+    async updateProfile(fullName: string) {
+      requireConfiguration();
+      const normalizedName = fullName.trim();
+      const { error: metadataError } = await supabase.auth.updateUser({ data: { full_name: normalizedName } });
+      if (metadataError) throw metadataError;
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) throw new AuthAccessError("Sign in to update your profile.");
+      const { data, error } = await supabase
+        .from("users")
+        .update({ full_name: normalizedName })
+        .eq("id", user.id)
+        .select("id, role, email, phone, full_name, is_active")
+        .single();
+      if (error) throw error;
+      return data as UserProfile;
     },
     onAuthStateChange(
       callback: (event: AuthChangeEvent, session: Session | null) => void,

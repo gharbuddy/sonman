@@ -26,7 +26,7 @@ type ProductRow = {
   is_active: boolean;
   delivery_size: DeliverySize;
   categories: { name: string } | null;
-  inventory: { quantity_available: number }[] | null;
+  inventory: { quantity_available: number } | { quantity_available: number }[] | null;
   product_images: { storage_path: string; is_primary: boolean; sort_order: number }[] | null;
 };
 
@@ -34,7 +34,9 @@ const slugify = (value: string) =>
   value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 const mapProduct = (supabase: SupabaseClient, row: ProductRow): VendorProduct => {
-  const stock = row.inventory?.[0]?.quantity_available ?? 0;
+  const stock = Array.isArray(row.inventory)
+  ? row.inventory[0]?.quantity_available ?? 0
+  : row.inventory?.quantity_available ?? 0;
   const image = [...(row.product_images ?? [])].sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.sort_order - b.sort_order)[0];
   return {
     id: row.id,
@@ -58,12 +60,29 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
     return data as Category[];
   },
   async list() {
-    const { data, error } = await supabase.from("products")
-      .select("id, category_id, name, slug, description, price, is_active, delivery_size, categories(name), inventory(quantity_available), product_images(storage_path, is_primary, sort_order)")
-      .is("deleted_at", null).order("created_at", { ascending: false });
-    if (error) throw error;
-    return (data as unknown as ProductRow[]).map((row) => mapProduct(supabase, row));
-  },
+  const { data, error } = await supabase
+    .from("products")
+    .select(`
+      id,
+      category_id,
+      name,
+      slug,
+      description,
+      price,
+      is_active,
+      delivery_size,
+      categories(name),
+      inventory!inventory_product_id_fkey(quantity_available),
+      product_images(storage_path, is_primary, sort_order)
+    `)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data as unknown as ProductRow[]).map((row) =>
+    mapProduct(supabase, row),
+  );
+},
   async save(input: { product?: VendorProduct; categoryId: string; name: string; description: string; price: number; stock: number; deliverySize: DeliverySize; image?: { uri: string; mimeType?: string | null; fileName?: string | null } }) {
     const { data: vendor, error: vendorError } = await supabase.from("vendors").select("id").single();
     if (vendorError || !vendor) throw vendorError ?? new Error("Vendor profile is unavailable.");

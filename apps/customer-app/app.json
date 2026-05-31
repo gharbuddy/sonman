@@ -14,6 +14,10 @@
     "platforms": [
       "android",
       "ios"
-    ]
+    ],
+    "android": {
+      "package": "com.sonman.customer"
+    },
+    "plugins": ["expo-notifications"]
   }
 }

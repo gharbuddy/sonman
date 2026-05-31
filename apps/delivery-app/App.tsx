@@ -1,5 +1,7 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { UserProfile } from "@sonman/auth-service";
+import { NotificationHistoryScreen, NotificationSettingsScreen, usePushNotifications } from "@sonman/notifications-service";
 import { authService } from "./auth";
 import { createDeliveryOrdersService, type DeliveryOrder as Order, type DeliveryOrderStatus as OrderStatus } from "./orders";
 import {
@@ -15,7 +17,7 @@ import {
   View,
 } from "react-native";
 
-type Screen = "login" | "dashboard" | "available" | "assigned" | "details" | "pickup" | "route" | "delivery" | "earnings" | "profile";
+type Screen = "login" | "dashboard" | "available" | "assigned" | "details" | "pickup" | "route" | "delivery" | "earnings" | "profile" | "notifications" | "notification-settings";
 const palette = {
   cream: "#F8F6F1", white: "#FFFFFF", sand: "#F0ECE4", line: "#E7E1D8",
   black: "#171717", muted: "#76716A", gold: "#A97B2C", goldPale: "#F6E8C6",
@@ -34,7 +36,9 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderError, setOrderError] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
+  const [profile, setProfile] = useState<UserProfile>();
   const ordersService = useMemo(() => createDeliveryOrdersService(authService.supabase), []);
+  usePushNotifications(authService.supabase, authenticated, "delivery");
   const selected = orders.filter((order) => order.id === selectedId)[0];
 
   const openOrder = (order: Order) => { setSelectedId(order.id); setScreen("details"); };
@@ -79,6 +83,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
+    void authService.getCurrentProfile().then(setProfile).catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Profile could not be loaded."));
     void loadOrders();
     const channel = ordersService.subscribe(() => void loadOrders());
     return () => { void authService.supabase.removeChannel(channel); };
@@ -87,7 +92,7 @@ export default function App() {
   if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return <SafeLayout>
-    {screen === "dashboard" && <Dashboard orders={orders} error={orderError} onNavigate={setScreen} onOpen={openOrder} />}
+    {screen === "dashboard" && <Dashboard profile={profile} orders={orders} error={orderError} onNavigate={setScreen} onOpen={openOrder} />}
     {screen === "available" && <AvailableOrders orders={orders.filter((order) => order.status === "Available")} onOpen={openOrder} />}
     {screen === "assigned" && <AssignedOrders orders={orders.filter((order) => order.status !== "Available")} onOpen={openOrder} />}
     {screen === "details" && selected && <OrderDetails order={selected} onBack={() => setScreen(selected.status === "Available" ? "available" : "assigned")} onAccept={accept} onReject={reject} onPickup={() => setScreen("pickup")} onRoute={() => setScreen("route")} />}
@@ -95,7 +100,9 @@ export default function App() {
     {screen === "route" && selected && <RouteScreen order={selected} onBack={() => setScreen("details")} onDeliver={() => setScreen("delivery")} />}
     {screen === "delivery" && selected && <DeliveryConfirmation order={selected} onBack={() => setScreen("route")} onConfirm={delivered} />}
     {screen === "earnings" && <Earnings />}
-    {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+    {screen === "profile" && <Profile profile={profile} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+    {screen === "notifications" && <NotificationHistoryScreen supabase={authService.supabase} onBack={() => setScreen("profile")} />}
+    {screen === "notification-settings" && <NotificationSettingsScreen supabase={authService.supabase} app="delivery" onBack={() => setScreen("profile")} />}
     <BottomNav screen={screen} onNavigate={setScreen} />
   </SafeLayout>;
 }
@@ -134,11 +141,11 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
   </View>;
 }
 
-function Dashboard({ orders, error, onNavigate, onOpen }: { orders: Order[]; error: string; onNavigate: (screen: Screen) => void; onOpen: (order: Order) => void }) {
+function Dashboard({ profile, orders, error, onNavigate, onOpen }: { profile?: UserProfile; orders: Order[]; error: string; onNavigate: (screen: Screen) => void; onOpen: (order: Order) => void }) {
   const available = orders.filter((order) => order.status === "Available");
   const active = orders.filter((order) => order.status === "Assigned" || order.status === "Picked up");
   return <ScreenScroll>
-    <Header title="Good afternoon, Arjun" subtitle="Ready for your next delivery?" />
+    <Header title={`Welcome, ${profile?.full_name || "Partner"}`} subtitle="Ready for your next delivery?" />
     <View style={styles.statusCard}><View><Text style={styles.statusKicker}>YOU ARE ONLINE</Text><Text style={styles.statusTitle}>Accepting new orders</Text><Text style={styles.smallMuted}>Your zone: Central Bengaluru</Text></View><View style={styles.onlineDot} /></View>
     {!!error && <Text style={styles.error}>{error}</Text>}
     <View style={styles.statGrid}><StatCard value={String(active.length)} label="Active orders" note="Keep moving" color={palette.goldPale} onPress={() => onNavigate("assigned")} /><StatCard value={String(available.length)} label="Available" note="Near your zone" color={palette.greenPale} onPress={() => onNavigate("available")} /><StatCard value="Rs 684" label="Today earned" note="8 deliveries" color={palette.bluePale} onPress={() => onNavigate("earnings")} /><StatCard value="4.9" label="Your rating" note="142 reviews" color={palette.sand} /></View>
@@ -179,8 +186,9 @@ function Earnings() {
   return <ScreenScroll><Header title="Earnings" subtitle="A clear view of your delivery income." /><View style={styles.earningsHero}><Text style={styles.statusKicker}>TODAY'S EARNINGS</Text><Text style={styles.earningsValue}>Rs 684</Text><Text style={styles.heroSub}>8 completed deliveries</Text></View><View style={styles.statGrid}><StatCard value="142" label="Total deliveries" note="All time" color={palette.sand} /><StatCard value="Rs 684" label="Today's earnings" note="+12% vs yesterday" color={palette.greenPale} /><StatCard value="Rs 4,860" label="Weekly earnings" note="This week" color={palette.goldPale} /><StatCard value="Rs 18,740" label="Monthly earnings" note="May total" color={palette.bluePale} /></View><SectionHeader title="Recent payouts" /><InfoRow label="May 28 payout" value="Rs 3,920" /><InfoRow label="May 21 payout" value="Rs 4,180" /><InfoRow label="May 14 payout" value="Rs 3,760" /></ScreenScroll>;
 }
 
-function Profile({ onLogout }: { onLogout: () => void }) {
-  return <ScreenScroll><Header title="Profile" subtitle="Partner details and preferences." /><View style={styles.profileCard}><View style={styles.avatar}><Text style={styles.avatarText}>AK</Text></View><View><Text style={styles.profileName}>Arjun Kumar</Text><Text style={styles.goldText}>Verified delivery partner</Text><Text style={styles.smallMuted}>Partner ID: SD-2841</Text></View></View><SectionHeader title="Account settings" />{["Personal information", "Vehicle details", "Service zone", "Bank and payouts", "Notifications", "Help and support"].map((item) => <InfoRow key={item} label={item} value=">" />)}<Pressable onPress={onLogout}><Text style={styles.logout}>Sign out</Text></Pressable></ScreenScroll>;
+function Profile({ profile, onNotifications, onNotificationSettings, onLogout }: { profile?: UserProfile; onNotifications: () => void; onNotificationSettings: () => void; onLogout: () => void }) {
+  const label = profile?.full_name || "Delivery partner";
+  return <ScreenScroll><Header title="Profile" subtitle="Partner details and preferences." /><View style={styles.profileCard}><View style={styles.avatar}><Text style={styles.avatarText}>{label.slice(0, 2).toUpperCase()}</Text></View><View><Text style={styles.profileName}>{label}</Text><Text style={styles.smallMuted}>{profile?.email}</Text></View></View><SectionHeader title="Account settings" /><InfoRow label="Personal information" value=">" /><InfoRow label="Vehicle details" value=">" /><InfoRow label="Service zone" value=">" /><InfoRow label="Bank and payouts" value=">" /><InfoRow label="Notifications" value=">" onPress={onNotifications} /><InfoRow label="Notification settings" value=">" onPress={onNotificationSettings} /><InfoRow label="Help and support" value=">" /><Pressable onPress={onLogout}><Text style={styles.logout}>Sign out</Text></Pressable></ScreenScroll>;
 }
 
 function OrderSummary({ order, compact }: { order: Order; compact?: boolean }) {
@@ -198,7 +206,7 @@ function SectionHeader({ title, action, onPress }: { title: string; action?: str
 function StatCard({ value, label, note, color, onPress }: { value: string; label: string; note: string; color: string; onPress?: () => void }) { return <Pressable style={[styles.statCard, { backgroundColor: color }]} onPress={onPress}><Text style={styles.statValue}>{value}</Text><Text style={styles.rowTitle}>{label}</Text><Text style={styles.smallMuted}>{note}</Text></Pressable>; }
 function StepBadge({ label }: { label: string }) { return <Text style={styles.stepBadge}>{label}</Text>; }
 function Empty({ text }: { text: string }) { return <View style={styles.empty}><Text style={styles.goldText}>SONMAN DELIVERY</Text><Text style={styles.body}>{text}</Text></View>; }
-function InfoRow({ label, value }: { label: string; value: string }) { return <View style={styles.infoRow}><Text style={styles.rowTitle}>{label}</Text><Text style={styles.infoValue}>{value}</Text></View>; }
+function InfoRow({ label, value, onPress }: { label: string; value: string; onPress?: () => void }) { return <Pressable style={styles.infoRow} onPress={onPress}><Text style={styles.rowTitle}>{label}</Text><Text style={styles.infoValue}>{value}</Text></Pressable>; }
 function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) { return <Pressable style={[styles.primary, disabled && styles.disabled]} onPress={onPress} disabled={disabled}><Text style={styles.primaryText}>{label}</Text></Pressable>; }
 function OutlineButton({ label, onPress }: { label: string; onPress: () => void }) { return <Pressable style={styles.outline} onPress={onPress}><Text style={styles.outlineText}>{label}</Text></Pressable>; }
 

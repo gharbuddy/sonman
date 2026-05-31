@@ -35,9 +35,9 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
     const { error } = await supabase.rpc("set_cart_item", { product: productId, item_quantity: quantity });
     if (error) throw error;
   },
-  async placeOrder(deliveryDistanceKm = 0) {
+  async placeOrder(deliveryAddress: Record<string, unknown>, deliveryDistanceKm = 0) {
     const { error } = await supabase.rpc("place_cart_order", {
-      delivery_address: { label: "Placeholder address", payment: "placeholder" },
+      delivery_address: deliveryAddress,
       policy_acknowledged: true,
       delivery_distance_km: deliveryDistanceKm,
     });

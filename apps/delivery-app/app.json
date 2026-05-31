@@ -8,6 +8,10 @@
     "platforms": [
       "android",
       "ios"
-    ]
+    ],
+    "android": {
+      "package": "com.sonman.delivery"
+    },
+    "plugins": ["expo-notifications"]
   }
 }

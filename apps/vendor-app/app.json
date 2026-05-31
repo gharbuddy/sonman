@@ -10,12 +10,16 @@
       "ios"
     ],
     "plugins": [
+      "expo-notifications",
       [
         "expo-image-picker",
         {
           "photosPermission": "Allow Sonman Vendor to select product images for your catalogue."
         }
       ]
-    ]
+    ],
+    "android": {
+      "package": "com.sonman.vendor"
+    }
   }
 }

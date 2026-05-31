@@ -1,6 +1,8 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { UserProfile } from "@sonman/auth-service";
+import { NotificationHistoryScreen, NotificationSettingsScreen, usePushNotifications } from "@sonman/notifications-service";
 import { authService } from "./auth";
 import { createVendorOrdersService, ORDER_STATUS_LABELS, type VendorOrder as Order } from "./orders";
 import { createVendorProductsService, type Category, type DeliverySize, type VendorProduct as Product } from "./products";
@@ -18,7 +20,7 @@ import {
   View,
 } from "react-native";
 
-type Screen = "login" | "dashboard" | "products" | "add" | "edit" | "orders" | "inventory" | "earnings" | "profile";
+type Screen = "login" | "dashboard" | "products" | "add" | "edit" | "orders" | "inventory" | "earnings" | "profile" | "notifications" | "notification-settings";
 
 const palette = {
   cream: "#F8F6F1", white: "#FFFFFF", sand: "#F0ECE4", line: "#E7E1D8",
@@ -41,8 +43,20 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderError, setOrderError] = useState("");
   const [selected, setSelected] = useState<Product>();
+  const [profile, setProfile] = useState<UserProfile>();
+  const [storeName, setStoreName] = useState("");
   const productsService = useMemo(() => createVendorProductsService(authService.supabase), []);
   const ordersService = useMemo(() => createVendorOrdersService(authService.supabase), []);
+  usePushNotifications(authService.supabase, authenticated, "vendor");
+  const loadProfile = async () => {
+    const [nextProfile, vendor] = await Promise.all([
+      authService.getCurrentProfile(),
+      authService.supabase.from("vendors").select("business_name").single(),
+    ]);
+    if (vendor.error) throw vendor.error;
+    setProfile(nextProfile);
+    setStoreName(vendor.data.business_name);
+  };
 
   const edit = (product: Product) => { setSelected(product); setScreen("edit"); };
   const loadProducts = async () => {
@@ -81,7 +95,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) void Promise.all([loadProducts(), loadOrders()]);
+    if (authenticated) void Promise.all([loadProducts(), loadOrders(), loadProfile()]);
   }, [authenticated]);
 
   useEffect(() => {
@@ -96,14 +110,16 @@ export default function App() {
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return (
     <SafeLayout>
-      {screen === "dashboard" && <Dashboard products={products} orders={orders} onNavigate={setScreen} />}
+      {screen === "dashboard" && <Dashboard profile={profile} storeName={storeName} products={products} orders={orders} onNavigate={setScreen} />}
       {screen === "products" && <Products products={products} error={productError} onAdd={() => setScreen("add")} onEdit={edit} />}
       {screen === "add" && <ProductForm categories={categories} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
       {screen === "edit" && selected && <ProductForm categories={categories} product={selected} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
       {screen === "orders" && <Orders orders={orders} error={orderError} onAdvance={async (order) => { await ordersService.advance(order.id, order.status); await loadOrders(); }} />}
       {screen === "inventory" && <Inventory products={products} />}
       {screen === "earnings" && <Earnings />}
-      {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+      {screen === "profile" && <Profile profile={profile} storeName={storeName} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
+      {screen === "notifications" && <NotificationHistoryScreen supabase={authService.supabase} onBack={() => setScreen("profile")} />}
+      {screen === "notification-settings" && <NotificationSettingsScreen supabase={authService.supabase} app="vendor" onBack={() => setScreen("profile")} />}
       <BottomNav screen={screen} onNavigate={setScreen} />
     </SafeLayout>
   );
@@ -152,9 +168,9 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
   </View>;
 }
 
-function Dashboard({ products, orders, onNavigate }: { products: Product[]; orders: Order[]; onNavigate: (screen: Screen) => void }) {
+function Dashboard({ profile, storeName, products, orders, onNavigate }: { profile?: UserProfile; storeName: string; products: Product[]; orders: Order[]; onNavigate: (screen: Screen) => void }) {
   return <ScreenScroll>
-    <Header title="Good morning, Aanya" subtitle="Here is what is happening at Urban Edit." />
+    <Header title={`Welcome, ${profile?.full_name || "Vendor"}`} subtitle={`Here is what is happening at ${storeName || "your store"}.`} />
     <View style={styles.hero}>
       <Text style={styles.heroEyebrow}>MAY EARNINGS</Text><Text style={styles.heroValue}>Rs 1,24,860</Text>
       <Text style={styles.heroBody}>+18.4% from last month</Text><Pressable onPress={() => onNavigate("earnings")}><Text style={styles.heroLink}>View earnings  &gt;</Text></Pressable>
@@ -261,11 +277,12 @@ function Earnings() {
   </ScreenScroll>;
 }
 
-function Profile({ onLogout }: { onLogout: () => void }) {
+function Profile({ profile, storeName, onNotifications, onNotificationSettings, onLogout }: { profile?: UserProfile; storeName: string; onNotifications: () => void; onNotificationSettings: () => void; onLogout: () => void }) {
   return <ScreenScroll><Header title="Profile" subtitle="Store details and settings." />
-    <View style={styles.profileCard}><View style={styles.avatar}><Text style={styles.avatarText}>UE</Text></View><View><Text style={styles.profileName}>Urban Edit</Text><Text style={styles.goldText}>Verified Sonman vendor</Text></View></View>
+    <View style={styles.profileCard}><View style={styles.avatar}><Text style={styles.avatarText}>{(storeName || profile?.full_name || "V").slice(0, 2).toUpperCase()}</Text></View><View><Text style={styles.profileName}>{storeName || profile?.full_name || "Vendor"}</Text><Text style={styles.smallMuted}>{profile?.full_name}</Text><Text style={styles.smallMuted}>{profile?.email}</Text></View></View>
     <SectionHeader title="Store settings" />
-    {["Store information", "Payments and payouts", "Shipping preferences", "Notifications", "Help and support"].map((item) => <InfoRow key={item} label={item} value=">" />)}
+    <InfoRow label="Store information" value=">" /><InfoRow label="Payments and payouts" value=">" /><InfoRow label="Shipping preferences" value=">" />
+    <InfoRow label="Notifications" value=">" onPress={onNotifications} /><InfoRow label="Notification settings" value=">" onPress={onNotificationSettings} /><InfoRow label="Help and support" value=">" />
     <Pressable onPress={onLogout}><Text style={styles.logout}>Sign out</Text></Pressable>
   </ScreenScroll>;
 }
@@ -284,7 +301,7 @@ function QuickAction({ icon, label, onPress }: { icon: string; label: string; on
 function ProductCard({ product, onPress, inventory }: { product: Product; onPress?: () => void; inventory?: boolean }) { return <Pressable style={styles.productCard} onPress={onPress}><Image source={{ uri: product.image }} style={styles.productImage} /><View style={styles.flex}><View style={styles.between}><Text style={styles.productCategory}>{product.category}  ·  {product.sku}</Text><StatusBadge status={product.status} /></View><Text style={styles.rowTitle}>{product.name}</Text><View style={styles.between}><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={[styles.stock, product.stock < 8 && styles.stockLow]}>{product.stock} in stock</Text></View>{inventory && <View style={styles.stockBar}><View style={[styles.stockFill, { width: `${Math.min(product.stock * 5, 100)}%` }]} /></View>}</View></Pressable>; }
 function OrderCard({ order, detailed, onAdvance }: { order: Order; detailed?: boolean; onAdvance?: () => void }) { return <View style={styles.orderCard}><View style={styles.between}><Text style={styles.orderId}>{order.orderNumber}</Text><StatusBadge status={order.status} /></View><Text style={styles.rowTitle}>{order.item}</Text><Text style={styles.smallMuted}>{order.customer}  ·  {order.time}</Text><View style={styles.between}><Text style={styles.productPrice}>{money(order.amount)}</Text>{detailed && order.status !== "delivered" && <Text style={styles.goldText} onPress={onAdvance}>Advance status  &gt;</Text>}</View></View>; }
 function StatusBadge({ status }: { status: string }) { const label = ORDER_STATUS_LABELS[status] ?? status; const warning = status === "Low stock" || status === "pending"; const calm = status === "Active" || status === "delivered"; return <Text style={[styles.status, warning && styles.statusWarning, calm && styles.statusCalm]}>{label}</Text>; }
-function InfoRow({ label, value }: { label: string; value: string }) { return <View style={styles.infoRow}><Text style={styles.rowTitle}>{label}</Text><Text style={styles.infoValue}>{value}</Text></View>; }
+function InfoRow({ label, value, onPress }: { label: string; value: string; onPress?: () => void }) { return <Pressable style={styles.infoRow} onPress={onPress}><Text style={styles.rowTitle}>{label}</Text><Text style={styles.infoValue}>{value}</Text></Pressable>; }
 
 function BottomNav({ screen, onNavigate }: { screen: Screen; onNavigate: (screen: Screen) => void }) {
   const items = [["HM", "Home", "dashboard"], ["PD", "Products", "products"], ["BX", "Orders", "orders"], ["ST", "Inventory", "inventory"], ["ME", "Profile", "profile"]] as const;

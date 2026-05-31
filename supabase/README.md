@@ -29,3 +29,11 @@ The migrations provision:
 
 Object names must begin with the owning vendor or delivery-partner UUID:
 `<owner-id>/<filename>`.
+
+## Notifications
+
+The push notification migration stores native device tokens in
+`public.push_tokens`, preferences in `public.notification_preferences`, and
+durable history in `public.notifications`. Order and assignment triggers add
+history rows for customer order lifecycle changes, vendor new orders, and
+delivery assignments. The backend FCM worker delivers pending push rows.

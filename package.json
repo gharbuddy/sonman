@@ -8,10 +8,16 @@
     "node": ">=22"
   },
   "scripts": {
+    "customer": "corepack pnpm --filter @sonman/customer-app start --clear --port 8081",
+    "vendor": "corepack pnpm --filter @sonman/vendor-app start --clear --port 8082",
+    "delivery": "corepack pnpm --filter @sonman/delivery-app start --clear --port 8083",
+    "admin": "corepack pnpm --filter @sonman/admin-panel dev",
+
     "check": "corepack pnpm -r --if-present run check",
     "dev": "corepack pnpm -r --parallel --if-present run dev",
     "lint": "corepack pnpm -r --if-present run lint",
     "test": "corepack pnpm -r --if-present run test",
-    "typecheck": "corepack pnpm -r --if-present run typecheck"
+    "typecheck": "corepack pnpm -r --if-present run typecheck",
+    "build": "corepack pnpm -r --if-present run build"
   }
 }
