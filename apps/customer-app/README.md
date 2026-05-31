@@ -8,8 +8,8 @@ Expo, and TypeScript.
 Splash, onboarding, login, signup, home, categories, product listing, product
 details, cart, checkout, orders, and profile.
 
-The initial implementation uses dummy catalog data and local UI state only.
-Backend integration is intentionally out of scope.
+The initial UI remains available without fabricated catalog records. Connect
+the screens to the shared backend API for live Supabase data.
 
 ## Run Locally
 

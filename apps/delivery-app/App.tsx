@@ -36,29 +36,22 @@ const palette = {
   blue: "#43617D", bluePale: "#E5EDF5",
 };
 
-const seedOrders: Order[] = [
-  { id: "#SM2054", customer: "Meera Nair", vendor: "Urban Edit", pickup: "12 Residency Road, Bengaluru", delivery: "41 Park View Road, Indiranagar", distance: "4.2 km", expected: "Today, 2:30 PM", value: 12499, earnings: 86, status: "Available", items: "Noir Leather Weekender" },
-  { id: "#SM2053", customer: "Karan Shah", vendor: "Time House", pickup: "18 Church Street, Bengaluru", delivery: "76 12th Main, Koramangala", distance: "6.8 km", expected: "Today, 3:15 PM", value: 18999, earnings: 112, status: "Available", items: "Heritage Steel Chronograph" },
-  { id: "#SM2052", customer: "Aditi Rao", vendor: "Glow Room", pickup: "22 Lavelle Road, Bengaluru", delivery: "8 Cambridge Layout, Ulsoor", distance: "3.6 km", expected: "Today, 1:45 PM", value: 6499, earnings: 74, status: "Assigned", items: "Velvet Oud Eau de Parfum" },
-  { id: "#SM2051", customer: "Rohit Sen", vendor: "Aurelia", pickup: "5 Brigade Road, Bengaluru", delivery: "19 Richmond Town, Bengaluru", distance: "2.9 km", expected: "Today, 12:40 PM", value: 4599, earnings: 68, status: "Picked up", items: "Aurelia Gold-Tone Cuff" },
-];
-
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
 const NAV_HEIGHT = 68;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
-  const [orders, setOrders] = useState(seedOrders);
-  const [selectedId, setSelectedId] = useState(seedOrders[2].id);
-  const selected = orders.filter((order) => order.id === selectedId)[0] ?? orders[0];
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedId, setSelectedId] = useState<string>();
+  const selected = orders.filter((order) => order.id === selectedId)[0];
 
   const openOrder = (order: Order) => { setSelectedId(order.id); setScreen("details"); };
   const updateOrder = (status: OrderStatus) => {
-    setOrders((current) => current.map((order) => order.id === selected.id ? { ...order, status } : order));
+    if (selected) setOrders((current) => current.map((order) => order.id === selected.id ? { ...order, status } : order));
   };
   const accept = () => { updateOrder("Assigned"); setScreen("assigned"); };
-  const reject = () => { setOrders((current) => current.filter((order) => order.id !== selected.id)); setScreen("available"); };
+  const reject = () => { if (selected) setOrders((current) => current.filter((order) => order.id !== selected.id)); setScreen("available"); };
   const pickedUp = () => { updateOrder("Picked up"); setScreen("route"); };
   const delivered = () => { updateOrder("Delivered"); setScreen("assigned"); };
 
@@ -67,10 +60,10 @@ export default function App() {
     {screen === "dashboard" && <Dashboard orders={orders} onNavigate={setScreen} onOpen={openOrder} />}
     {screen === "available" && <AvailableOrders orders={orders.filter((order) => order.status === "Available")} onOpen={openOrder} />}
     {screen === "assigned" && <AssignedOrders orders={orders.filter((order) => order.status !== "Available")} onOpen={openOrder} />}
-    {screen === "details" && <OrderDetails order={selected} onBack={() => setScreen(selected.status === "Available" ? "available" : "assigned")} onAccept={accept} onReject={reject} onPickup={() => setScreen("pickup")} onRoute={() => setScreen("route")} />}
-    {screen === "pickup" && <PickupConfirmation order={selected} onBack={() => setScreen("details")} onConfirm={pickedUp} />}
-    {screen === "route" && <RouteScreen order={selected} onBack={() => setScreen("details")} onDeliver={() => setScreen("delivery")} />}
-    {screen === "delivery" && <DeliveryConfirmation order={selected} onBack={() => setScreen("route")} onConfirm={delivered} />}
+    {screen === "details" && selected && <OrderDetails order={selected} onBack={() => setScreen(selected.status === "Available" ? "available" : "assigned")} onAccept={accept} onReject={reject} onPickup={() => setScreen("pickup")} onRoute={() => setScreen("route")} />}
+    {screen === "pickup" && selected && <PickupConfirmation order={selected} onBack={() => setScreen("details")} onConfirm={pickedUp} />}
+    {screen === "route" && selected && <RouteScreen order={selected} onBack={() => setScreen("details")} onDeliver={() => setScreen("delivery")} />}
+    {screen === "delivery" && selected && <DeliveryConfirmation order={selected} onBack={() => setScreen("route")} onConfirm={delivered} />}
     {screen === "earnings" && <Earnings />}
     {screen === "profile" && <Profile onLogout={() => setScreen("login")} />}
     <BottomNav screen={screen} onNavigate={setScreen} />

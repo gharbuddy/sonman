@@ -3,8 +3,9 @@
 ## Scope
 
 This document describes the initial PostgreSQL data model for Sonman. It is a
-design reference only. It does not create migrations, PostgreSQL enums, row
-level security policies, triggers, or application code.
+design reference for the migrations in `supabase/migrations`. The migrations
+create the initial tables, PostgreSQL enums, row-level security policies,
+triggers, and storage buckets.
 
 Conventions:
 
@@ -478,7 +479,7 @@ Additional rules:
 
 ## Deferred Implementation Decisions
 
-- Migration framework and migration ownership
+- Production migration deployment ownership
 - PostgreSQL enum types versus check constraints for lifecycle states
 - Address normalization and whether reusable addresses need a dedicated table
 - Inventory reservation timeout and release mechanism

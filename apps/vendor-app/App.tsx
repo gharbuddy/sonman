@@ -25,20 +25,7 @@ const palette = {
   blue: "#43617D", bluePale: "#E5EDF5",
 };
 
-const seedProducts: Product[] = [
-  { id: 1, name: "Noir Leather Weekender", category: "Bags", price: 12499, stock: 18, status: "Active", sku: "BG-1008", image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=500&q=85" },
-  { id: 2, name: "Heritage Steel Chronograph", category: "Watches", price: 18999, stock: 4, status: "Low stock", sku: "WT-1012", image: "https://images.unsplash.com/photo-1523170335258-f5ed11844a49?auto=format&fit=crop&w=500&q=85" },
-  { id: 3, name: "Velvet Oud Eau de Parfum", category: "Beauty", price: 6499, stock: 24, status: "Active", sku: "BT-1024", image: "https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&w=500&q=85" },
-  { id: 4, name: "Classic Suede Loafers", category: "Footwear", price: 8999, stock: 0, status: "Draft", sku: "FT-1031", image: "https://images.unsplash.com/photo-1614252235316-8c857d38b5f4?auto=format&fit=crop&w=500&q=85" },
-  { id: 5, name: "Aurelia Gold-Tone Cuff", category: "Jewellery", price: 4599, stock: 7, status: "Active", sku: "JW-1038", image: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=500&q=85" },
-];
-
-const orders: Order[] = [
-  { id: "#SM2048", customer: "Meera Nair", item: "Noir Leather Weekender", amount: 12499, status: "New", time: "12 min ago" },
-  { id: "#SM2047", customer: "Karan Shah", item: "Heritage Steel Chronograph", amount: 18999, status: "Packing", time: "46 min ago" },
-  { id: "#SM2046", customer: "Aditi Rao", item: "Velvet Oud Eau de Parfum", amount: 6499, status: "Shipped", time: "2 hours ago" },
-  { id: "#SM2045", customer: "Rohit Sen", item: "Aurelia Gold-Tone Cuff", amount: 4599, status: "Delivered", time: "Yesterday" },
-];
+const orders: Order[] = [];
 
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
@@ -46,8 +33,8 @@ const NAV_HEIGHT = 68;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
-  const [products, setProducts] = useState(seedProducts);
-  const [selected, setSelected] = useState(seedProducts[0]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selected, setSelected] = useState<Product>();
 
   const edit = (product: Product) => { setSelected(product); setScreen("edit"); };
   const saveProduct = (product: Product) => {
@@ -61,7 +48,7 @@ export default function App() {
       {screen === "dashboard" && <Dashboard products={products} onNavigate={setScreen} />}
       {screen === "products" && <Products products={products} onAdd={() => setScreen("add")} onEdit={edit} />}
       {screen === "add" && <ProductForm onBack={() => setScreen("products")} onSave={saveProduct} />}
-      {screen === "edit" && <ProductForm product={selected} onBack={() => setScreen("products")} onSave={saveProduct} />}
+      {screen === "edit" && selected && <ProductForm product={selected} onBack={() => setScreen("products")} onSave={saveProduct} />}
       {screen === "orders" && <Orders />}
       {screen === "inventory" && <Inventory products={products} />}
       {screen === "earnings" && <Earnings />}
@@ -126,7 +113,7 @@ function ProductForm({ product, onBack, onSave }: { product?: Product; onBack: (
   const [stock, setStock] = useState(product ? String(product.stock) : "");
   const [description, setDescription] = useState(product ? "Premium materials, thoughtful details, and a refined finish made for everyday use." : "");
   const [enhanced, setEnhanced] = useState(false);
-  const save = () => onSave({ id: product?.id ?? Date.now(), name: name || "New Sonman Product", category: product?.category ?? "Fashion", price: Number(price) || 2499, stock: Number(stock) || 0, status: Number(stock) > 5 ? "Active" : "Low stock", sku: product?.sku ?? "SN-NEW", image: product?.image ?? seedProducts[0].image });
+  const save = () => onSave({ id: product?.id ?? Date.now(), name, category: product?.category ?? "", price: Number(price), stock: Number(stock) || 0, status: Number(stock) > 5 ? "Active" : "Low stock", sku: product?.sku ?? "", image: product?.image ?? "" });
   return <ScreenScroll>
     <PageHeader title={product ? "Edit product" : "Add product"} onBack={onBack} />
     <Text style={styles.sectionLabel}>PRODUCT IMAGES</Text>

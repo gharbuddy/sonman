@@ -29,9 +29,10 @@ configuration placeholders.
 
 ## Current Scope
 
-The customer application includes frontend-only shopping screens with dummy
-data and local navigation. Database migrations, backend integrations, and
-deployment manifests remain out of scope.
+Supabase migrations, Auth synchronization, storage buckets, row-level security,
+and the initial Express API structure are included. Prototype applications no
+longer boot with dummy operational records; connect their screens to the
+versioned API as each workflow is implemented.
 
 ## Run Customer App
 

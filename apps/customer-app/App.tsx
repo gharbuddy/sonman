@@ -56,110 +56,10 @@ const palette = {
   red: "#D85743",
 };
 
-const products: Product[] = [
-  {
-    id: 1,
-    name: "Heritage Steel Chronograph",
-    category: "Watches",
-    price: 18999,
-    oldPrice: 24999,
-    rating: 4.8,
-    reviews: 128,
-    delivery: "Tomorrow",
-    badge: "PREMIUM",
-    image: "https://images.unsplash.com/photo-1523170335258-f5ed11844a49?auto=format&fit=crop&w=800&q=85",
-    description: "A refined steel chronograph with a midnight dial, precise movement, and a comfortable link bracelet for everyday wear.",
-  },
-  {
-    id: 2,
-    name: "Noir Leather Weekender",
-    category: "Bags",
-    price: 12499,
-    oldPrice: 15999,
-    rating: 4.9,
-    reviews: 84,
-    delivery: "In 2 days",
-    badge: "BESTSELLER",
-    image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=800&q=85",
-    description: "Full-grain leather, clean lines, and considered storage for short escapes and work trips.",
-  },
-  {
-    id: 3,
-    name: "Velvet Oud Eau de Parfum",
-    category: "Beauty",
-    price: 6499,
-    oldPrice: 7499,
-    rating: 4.7,
-    reviews: 212,
-    delivery: "Tomorrow",
-    image: "https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&w=800&q=85",
-    description: "A warm composition of oud, cedar, and amber with a quietly lasting finish.",
-  },
-  {
-    id: 4,
-    name: "Classic Suede Loafers",
-    category: "Footwear",
-    price: 8999,
-    oldPrice: 10999,
-    rating: 4.6,
-    reviews: 67,
-    delivery: "In 3 days",
-    badge: "NEW",
-    image: "https://images.unsplash.com/photo-1614252235316-8c857d38b5f4?auto=format&fit=crop&w=800&q=85",
-    description: "Soft suede loafers with a tailored profile and a flexible leather-lined sole.",
-  },
-  {
-    id: 5,
-    name: "Aurelia Gold-Tone Cuff",
-    category: "Jewellery",
-    price: 4599,
-    oldPrice: 5999,
-    rating: 4.8,
-    reviews: 156,
-    delivery: "Tomorrow",
-    badge: "PREMIUM",
-    image: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=85",
-    description: "A minimal gold-tone cuff shaped for effortless layering and understated polish.",
-  },
-  {
-    id: 6,
-    name: "Relaxed Linen Resort Shirt",
-    category: "Fashion",
-    price: 3299,
-    oldPrice: 4299,
-    rating: 4.5,
-    reviews: 94,
-    delivery: "In 2 days",
-    image: "https://images.unsplash.com/photo-1603252109303-2751441dd157?auto=format&fit=crop&w=800&q=85",
-    description: "Breathable premium linen with a relaxed silhouette for warm, unhurried days.",
-  },
-];
-
-const categories = [
-  ["Fashion", "TS", "Everyday style", "#F9E5D7"],
-  ["Mobiles", "MB", "Devices and accessories", "#E2EDF8"],
-  ["Beauty", "BT", "Daily care", "#F8E1EA"],
-  ["Home", "HM", "For every room", "#E8EEE1"],
-  ["Footwear", "SN", "New-season steps", "#ECE5F7"],
-  ["Watches", "WT", "Smart classics", "#F7EACF"],
-  ["Bags", "BG", "Carry better", "#DCEFEA"],
-  ["Jewellery", "JW", "Fine details", "#F5E5C8"],
-  ["Grocery", "GR", "Pantry essentials", "#E4F0D7"],
-  ["More", "++", "Explore all", "#E6E8ED"],
-] as const;
-
-const offers = [
-  ["DAYLIGHT DEALS", "Everyday essentials,\nbetter prices.", "Up to 40% off", "#E0F1E8"],
-  ["FAST DELIVERY", "Your favourites,\nat your door.", "Free delivery", "#E3EBF8"],
-  ["SONMAN PICKS", "Useful finds for\nyour routine.", "Shop smart", "#F7E7C9"],
-] as const;
-
-const vendors = [
-  ["Urban Edit", "UE", "4.8", "#E2EDF8"],
-  ["Home Story", "HS", "4.7", "#E8EEE1"],
-  ["Daily Drop", "DD", "4.6", "#F9E5D7"],
-  ["Glow Room", "GR", "4.9", "#F8E1EA"],
-] as const;
+const products: Product[] = [];
+const categories: ReadonlyArray<readonly [string, string, string, string]> = [];
+const offers: ReadonlyArray<readonly [string, string, string, string]> = [];
+const vendors: ReadonlyArray<readonly [string, string, string, string]> = [];
 
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const discount = ({ price, oldPrice }: Product) =>
@@ -171,9 +71,9 @@ const BOTTOM_SAFE_SPACE = Platform.OS === "android" ? 36 : 18;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
-  const [selected, setSelected] = useState(products[0]);
+  const [selected, setSelected] = useState<Product>();
   const [category, setCategory] = useState("Trending");
-  const [cart, setCart] = useState<number[]>([1, 3]);
+  const [cart, setCart] = useState<number[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => setScreen("onboarding"), 900);
@@ -214,7 +114,7 @@ export default function App() {
       {screen === "home" && <Home onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
       {screen === "categories" && <Categories onBack={() => setScreen("home")} onCategory={openListing} />}
       {screen === "listing" && <Listing category={category} onBack={() => setScreen("home")} onProduct={openProduct} />}
-      {screen === "details" && (
+      {screen === "details" && selected && (
         <Details
           product={selected}
           inCart={cart.includes(selected.id)}
@@ -250,7 +150,6 @@ function Onboarding({ onContinue }: { onContinue: () => void }) {
     <ScreenShell contentContainerStyle={styles.onboarding}>
         <View style={styles.between}><Text style={styles.logo}>sonman</Text><Text style={styles.link} onPress={onContinue}>Skip</Text></View>
         <View style={styles.onboardingVisual}>
-          <Image source={{ uri: products[1].image }} style={styles.fillImage} />
           <View style={styles.floatingNote}><Text style={styles.gold}>AI</Text><Text style={styles.noteText}>Picks tailored to your taste</Text></View>
         </View>
         <View>
@@ -405,8 +304,7 @@ function Orders() {
       <Text style={styles.pageTitle}>Your orders</Text>
       <Text style={styles.body}>Track deliveries and revisit past purchases.</Text>
       <View style={styles.tabs}><Text style={styles.tabActive}>Active</Text><Text style={styles.tab}>Past orders</Text></View>
-      <OrderCard title="Arriving tomorrow" code="#SMN2048" products={[products[0], products[2]]} active />
-      <OrderCard title="Delivered on 24 May" code="#SMN1976" products={[products[5]]} />
+      <Empty title="No orders yet" subtitle="Your real orders will appear here after checkout." />
     </ScreenScroll>
   );
 }

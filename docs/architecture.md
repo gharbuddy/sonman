@@ -88,7 +88,7 @@ server-side.
 
 The following details should be decided during implementation:
 
-- PostgreSQL migration tooling and schema ownership
+- Production migration deployment ownership
 - API route conventions and versioning
 - Shared package boundaries
 - Deployment targets and continuous delivery workflows
