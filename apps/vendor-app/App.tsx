@@ -1,6 +1,8 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
+import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authService } from "./auth";
+import { createVendorProductsService, type Category, type VendorProduct as Product } from "./products";
 import {
   Image,
   Platform,
@@ -16,7 +18,6 @@ import {
 } from "react-native";
 
 type Screen = "login" | "dashboard" | "products" | "add" | "edit" | "orders" | "inventory" | "earnings" | "profile";
-type Product = { id: number; name: string; category: string; price: number; stock: number; status: "Active" | "Low stock" | "Draft"; image: string; sku: string };
 type Order = { id: string; customer: string; item: string; amount: number; status: "New" | "Packing" | "Shipped" | "Delivered"; time: string };
 
 const palette = {
@@ -37,12 +38,21 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [productError, setProductError] = useState("");
   const [selected, setSelected] = useState<Product>();
+  const productsService = useMemo(() => createVendorProductsService(authService.supabase), []);
 
   const edit = (product: Product) => { setSelected(product); setScreen("edit"); };
-  const saveProduct = (product: Product) => {
-    setProducts((current) => current.some((item) => item.id === product.id) ? current.map((item) => item.id === product.id ? product : item) : [product, ...current]);
-    setScreen("products");
+  const loadProducts = async () => {
+    try {
+      setProductError("");
+      const [nextProducts, nextCategories] = await Promise.all([productsService.list(), productsService.listCategories()]);
+      setProducts(nextProducts);
+      setCategories(nextCategories);
+    } catch (cause) {
+      setProductError(cause instanceof Error ? cause.message : "Products could not be loaded.");
+    }
   };
 
   useEffect(() => {
@@ -61,14 +71,18 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (authenticated) void loadProducts();
+  }, [authenticated]);
+
   if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return (
     <SafeLayout>
       {screen === "dashboard" && <Dashboard products={products} onNavigate={setScreen} />}
-      {screen === "products" && <Products products={products} onAdd={() => setScreen("add")} onEdit={edit} />}
-      {screen === "add" && <ProductForm onBack={() => setScreen("products")} onSave={saveProduct} />}
-      {screen === "edit" && selected && <ProductForm product={selected} onBack={() => setScreen("products")} onSave={saveProduct} />}
+      {screen === "products" && <Products products={products} error={productError} onAdd={() => setScreen("add")} onEdit={edit} />}
+      {screen === "add" && <ProductForm categories={categories} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
+      {screen === "edit" && selected && <ProductForm categories={categories} product={selected} onBack={() => setScreen("products")} onSaved={async () => { await loadProducts(); setScreen("products"); }} />}
       {screen === "orders" && <Orders />}
       {screen === "inventory" && <Inventory products={products} />}
       {screen === "earnings" && <Earnings />}
@@ -145,37 +159,64 @@ function Dashboard({ products, onNavigate }: { products: Product[]; onNavigate: 
   </ScreenScroll>;
 }
 
-function Products({ products, onAdd, onEdit }: { products: Product[]; onAdd: () => void; onEdit: (product: Product) => void }) {
+function Products({ products, error, onAdd, onEdit }: { products: Product[]; error: string; onAdd: () => void; onEdit: (product: Product) => void }) {
   const [query, setQuery] = useState("");
   const visible = products.filter((product) => product.name.toLowerCase().indexOf(query.toLowerCase()) >= 0);
   return <ScreenScroll>
     <Header title="Products" subtitle={`${products.length} products in your catalogue.`} action="+" onAction={onAdd} />
     <Search value={query} onChange={setQuery} placeholder="Search products" />
     <View style={styles.chips}>{["All products", "Active", "Low stock", "Draft"].map((item, index) => <View key={item} style={[styles.chip, index === 0 && styles.chipActive]}><Text style={[styles.chipText, index === 0 && styles.chipTextActive]}>{item}</Text></View>)}</View>
+    {!!error && <Text style={styles.error}>{error}</Text>}
+    {!visible.length && !error && <Text style={styles.body}>No products yet. Add your first product to start your catalogue.</Text>}
     {visible.map((product) => <ProductCard key={product.id} product={product} onPress={() => onEdit(product)} />)}
   </ScreenScroll>;
 }
 
-function ProductForm({ product, onBack, onSave }: { product?: Product; onBack: () => void; onSave: (product: Product) => void }) {
+function ProductForm({ product, categories, onBack, onSaved }: { product?: Product; categories: Category[]; onBack: () => void; onSaved: () => Promise<void> }) {
   const [name, setName] = useState(product?.name ?? "");
   const [price, setPrice] = useState(product ? String(product.price) : "");
   const [stock, setStock] = useState(product ? String(product.stock) : "");
-  const [description, setDescription] = useState(product ? "Premium materials, thoughtful details, and a refined finish made for everyday use." : "");
+  const [category, setCategory] = useState(product?.category ?? categories[0]?.name ?? "");
+  const [description, setDescription] = useState(product?.description ?? "");
+  const [image, setImage] = useState<ImagePicker.ImagePickerAsset>();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [enhanced, setEnhanced] = useState(false);
-  const save = () => onSave({ id: product?.id ?? Date.now(), name, category: product?.category ?? "", price: Number(price), stock: Number(stock) || 0, status: Number(stock) > 5 ? "Active" : "Low stock", sku: product?.sku ?? "", image: product?.image ?? "" });
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, quality: 0.9 });
+    if (!result.canceled) setImage(result.assets[0]);
+  };
+  const save = async () => {
+    const selectedCategory = categories.find((item) => item.name.toLowerCase() === category.trim().toLowerCase());
+    if (!name.trim() || !selectedCategory || !Number.isFinite(Number(price)) || Number(price) < 0) {
+      setError("Enter a product name, a valid category, and a valid price.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await createVendorProductsService(authService.supabase).save({ product, categoryId: selectedCategory.id, name, description, price: Number(price), stock: Math.max(0, Number(stock) || 0), image });
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Product could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return <ScreenScroll>
     <PageHeader title={product ? "Edit product" : "Add product"} onBack={onBack} />
     <Text style={styles.sectionLabel}>PRODUCT IMAGES</Text>
-    <Pressable style={styles.upload}><Text style={styles.uploadIcon}>+</Text><Text style={styles.rowTitle}>Upload product images</Text><Text style={styles.smallMuted}>Add up to 6 JPG or PNG images</Text></Pressable>
+    <Pressable style={styles.upload} onPress={pickImage}><Text style={styles.uploadIcon}>+</Text><Text style={styles.rowTitle}>{image ? "Product image selected" : "Upload product images"}</Text><Text style={styles.smallMuted}>{image?.fileName ?? "Add a JPG or PNG image"}</Text></Pressable>
     <Text style={styles.sectionLabel}>PRODUCT DETAILS</Text>
     <Field label="Product name" placeholder="Enter product name" value={name} onChange={setName} />
-    <Field label="Category" placeholder="Select category" value={product?.category ?? ""} />
+    <Field label="Category" placeholder="Enter an active category" value={category} onChange={setCategory} />
     <View style={styles.formRow}><View style={styles.flex}><Field label="Price" placeholder="Rs 0" value={price} onChange={setPrice} /></View><View style={styles.flex}><Field label="Stock quantity" placeholder="0" value={stock} onChange={setStock} /></View></View>
     <Field label="Description" placeholder="Describe your product" value={description} onChange={setDescription} multiline />
     <Pressable style={[styles.aiCard, enhanced && styles.aiDone]} onPress={() => setEnhanced(true)}>
       <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>{enhanced ? "Description enhanced" : "Enhance with Sonman AI"}</Text><Text style={styles.smallMuted}>{enhanced ? "Your copy is polished and ready to review." : "Improve title, description, and search keywords."}</Text></View><Text style={styles.goldText}>{enhanced ? "Done" : "Try"}</Text>
     </Pressable>
-    <PrimaryButton label={product ? "Save changes" : "Publish product"} onPress={save} />
+    {!!error && <Text style={styles.error}>{error}</Text>}
+    <PrimaryButton label={busy ? "Saving..." : product ? "Save changes" : "Publish product"} onPress={save} />
   </ScreenScroll>;
 }
 
@@ -187,6 +228,7 @@ function Inventory({ products }: { products: Product[] }) {
   return <ScreenScroll><Header title="Inventory" subtitle="Keep your catalogue ready to sell." />
     <View style={styles.inventoryHero}><View><Text style={styles.sectionLabel}>STOCK HEALTH</Text><Text style={styles.heroValueDark}>82%</Text><Text style={styles.smallMuted}>Most products are in good shape.</Text></View><Text style={styles.inventoryMark}>ST</Text></View>
     <SectionHeader title="Needs attention" action="3 items" />
+    {!products.filter((product) => product.stock < 8).length && <Text style={styles.body}>No low-stock products.</Text>}
     {products.filter((product) => product.stock < 8).map((product) => <ProductCard key={product.id} product={product} inventory />)}
   </ScreenScroll>;
 }

@@ -1,6 +1,7 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { useEffect, useState, type ReactNode } from "react";
 import { authService } from "./auth";
+import { loadActiveProducts, type CustomerProduct as Product } from "./products";
 import {
   Image,
   Platform,
@@ -29,20 +30,6 @@ type Screen =
   | "orders"
   | "profile";
 
-type Product = {
-  id: number;
-  name: string;
-  category: string;
-  price: number;
-  oldPrice: number;
-  rating: number;
-  reviews: number;
-  delivery: string;
-  image: string;
-  badge?: string;
-  description: string;
-};
-
 const palette = {
   cream: "#F8F6F1",
   white: "#FFFFFF",
@@ -57,7 +44,6 @@ const palette = {
   red: "#D85743",
 };
 
-const products: Product[] = [];
 const categories: ReadonlyArray<readonly [string, string, string, string]> = [];
 const offers: ReadonlyArray<readonly [string, string, string, string]> = [];
 const vendors: ReadonlyArray<readonly [string, string, string, string]> = [];
@@ -74,13 +60,21 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productsError, setProductsError] = useState("");
   const [selected, setSelected] = useState<Product>();
   const [category, setCategory] = useState("Trending");
-  const [cart, setCart] = useState<number[]>([]);
+  const [cart, setCart] = useState<string[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => setScreen((current) => current === "splash" ? "onboarding" : current), 900);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    loadActiveProducts(authService.supabase)
+      .then(setProducts)
+      .catch((cause) => setProductsError(cause instanceof Error ? cause.message : "Products could not be loaded."));
   }, []);
 
   useEffect(() => {
@@ -107,7 +101,7 @@ export default function App() {
     setSelected(product);
     setScreen("details");
   };
-  const toggleCart = (id: number) =>
+  const toggleCart = (id: string) =>
     setCart((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     );
@@ -134,9 +128,9 @@ export default function App() {
 
   return (
     <SafeLayout>
-      {screen === "home" && <Home onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
+      {screen === "home" && <Home products={products} productsError={productsError} onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
       {screen === "categories" && <Categories onBack={() => setScreen("home")} onCategory={openListing} />}
-      {screen === "listing" && <Listing category={category} onBack={() => setScreen("home")} onProduct={openProduct} />}
+      {screen === "listing" && <Listing products={products} category={category} onBack={() => setScreen("home")} onProduct={openProduct} />}
       {screen === "details" && selected && (
         <Details
           product={selected}
@@ -231,7 +225,7 @@ function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; o
   );
 }
 
-function Home({ onCategories, onListing, onProduct }: { onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
+function Home({ products, productsError, onCategories, onListing, onProduct }: { products: Product[]; productsError: string; onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
   const { width } = useWindowDimensions();
   const contentWidth = width - (width < 360 ? 24 : 28);
   const cardWidth = Math.floor((contentWidth - 10) / 2);
@@ -252,9 +246,10 @@ function Home({ onCategories, onListing, onProduct }: { onCategories: () => void
         {categories.map(([name, icon, , color]) => <Pressable key={name} style={styles.categoryBubble} onPress={() => name === "More" ? onCategories() : onListing(name)}><View style={[styles.categoryCircle, { backgroundColor: color }]}><Text style={styles.categoryCircleText}>{icon}</Text></View><Text style={styles.categoryBubbleText}>{name}</Text></Pressable>)}
       </ScrollView>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={contentWidth + 10} decelerationRate="fast" contentContainerStyle={styles.offerRail}>
-        {offers.map(([kicker, title, action, color], index) => <Pressable key={kicker} style={[styles.offer, { width: contentWidth, backgroundColor: color }]} onPress={() => onListing()}><View style={styles.flex}><Text style={styles.offerKicker}>{kicker}</Text><Text style={styles.offerTitle}>{title}</Text><Text style={styles.offerAction}>{action}  &gt;</Text></View><Image source={{ uri: products[index + 1].image }} style={styles.offerImage} /></Pressable>)}
+        {offers.map(([kicker, title, action, color], index) => <Pressable key={kicker} style={[styles.offer, { width: contentWidth, backgroundColor: color }]} onPress={() => onListing()}><View style={styles.flex}><Text style={styles.offerKicker}>{kicker}</Text><Text style={styles.offerTitle}>{title}</Text><Text style={styles.offerAction}>{action}  &gt;</Text></View>{products[index + 1]?.image && <Image source={{ uri: products[index + 1].image }} style={styles.offerImage} />}</Pressable>)}
       </ScrollView>
       <MarketplaceSection title="Trending now" action="See all" onPress={() => onListing("Trending")}><View style={styles.productGrid}>{products.slice(0, 4).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</View></MarketplaceSection>
+      {!products.length && <Empty title={productsError ? "Products unavailable" : "No products yet"} subtitle={productsError || "Active products will appear here when vendors publish them."} />}
       <MarketplaceSection title="Recommended for you" action="See all" onPress={() => onListing("Recommended")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.productRail}>{[...products].reverse().slice(0, 4).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</ScrollView></MarketplaceSection>
       <MarketplaceSection title="Continue shopping" action="View history" onPress={() => onListing("Continue shopping")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{products.slice(1, 5).map((product) => <CompactProduct key={product.id} product={product} onPress={() => onProduct(product)} />)}</ScrollView></MarketplaceSection>
       <MarketplaceSection title="Popular vendors" action="See all" onPress={() => onListing("Vendors")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.vendorRail}>{vendors.map(([name, icon, rating, color]) => <VendorCard key={name} name={name} icon={icon} rating={rating} color={color} />)}</ScrollView></MarketplaceSection>
@@ -282,7 +277,7 @@ function Categories({ onBack, onCategory }: { onBack: () => void; onCategory: (c
   );
 }
 
-function Listing({ category, onBack, onProduct }: { category: string; onBack: () => void; onProduct: (product: Product) => void }) {
+function Listing({ products, category, onBack, onProduct }: { products: Product[]; category: string; onBack: () => void; onProduct: (product: Product) => void }) {
   const { width } = useWindowDimensions();
   const contentWidth = width - (width < 360 ? 24 : 28);
   const cardWidth = Math.floor((contentWidth - 10) / 2);
@@ -296,6 +291,7 @@ function Listing({ category, onBack, onProduct }: { category: string; onBack: ()
       </ScrollView>
       <View style={styles.between}><Text style={styles.smallMuted}>{visible.length} curated products</Text><Text style={styles.smallMuted}>Grid view</Text></View>
       <View style={[styles.productGrid, styles.gridTop]}>{visible.map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</View>
+      {!visible.length && <Empty title="No products found" subtitle="Active products in this collection will appear here." />}
     </ScreenScroll>
   );
 }
@@ -320,7 +316,7 @@ function Details({ product, inCart, onBack, onCart, onBuy }: { product: Product;
   );
 }
 
-function Cart({ items, subtotal, onRemove, onCheckout }: { items: Product[]; subtotal: number; onRemove: (id: number) => void; onCheckout: () => void }) {
+function Cart({ items, subtotal, onRemove, onCheckout }: { items: Product[]; subtotal: number; onRemove: (id: string) => void; onCheckout: () => void }) {
   return (
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your cart</Text>
