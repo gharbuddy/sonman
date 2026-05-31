@@ -1,5 +1,6 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { useEffect, useState, type ReactNode } from "react";
+import { authService } from "./auth";
 import {
   Image,
   Platform,
@@ -71,13 +72,31 @@ const BOTTOM_SAFE_SPACE = Platform.OS === "android" ? 36 : 18;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [selected, setSelected] = useState<Product>();
   const [category, setCategory] = useState("Trending");
   const [cart, setCart] = useState<number[]>([]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setScreen("onboarding"), 900);
+    const timer = setTimeout(() => setScreen((current) => current === "splash" ? "onboarding" : current), 900);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    authService.restoreSession("customer")
+      .then((auth) => {
+        if (auth) {
+          setAuthenticated(true);
+          setScreen("home");
+        }
+      })
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingSession(false));
+    const subscription = authService.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const openListing = (nextCategory = "Trending") => {
@@ -95,19 +114,23 @@ export default function App() {
   const cartProducts = products.filter((product) => cart.includes(product.id));
   const subtotal = cartProducts.reduce((sum, product) => sum + product.price, 0);
 
-  if (screen === "splash") return <SafeLayout><Splash /></SafeLayout>;
+  if (checkingSession || screen === "splash") return <SafeLayout><Splash /></SafeLayout>;
   if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("login")} /></SafeLayout>;
   if (screen === "login" || screen === "signup") {
     return (
       <SafeLayout>
         <Auth
           mode={screen}
-          onSubmit={() => setScreen("home")}
+          onAuthenticated={() => {
+            setAuthenticated(true);
+            setScreen("home");
+          }}
           onSwitch={() => setScreen(screen === "login" ? "signup" : "login")}
         />
       </SafeLayout>
     );
   }
+  if (!authenticated) return <SafeLayout><Auth mode="login" onAuthenticated={() => { setAuthenticated(true); setScreen("home"); }} onSwitch={() => setScreen("signup")} /></SafeLayout>;
 
   return (
     <SafeLayout>
@@ -129,7 +152,7 @@ export default function App() {
       {screen === "cart" && <Cart items={cartProducts} subtotal={subtotal} onRemove={toggleCart} onCheckout={() => setScreen("checkout")} />}
       {screen === "checkout" && <Checkout subtotal={subtotal} onBack={() => setScreen("cart")} onPlaceOrder={() => setScreen("orders")} />}
       {screen === "orders" && <Orders />}
-      {screen === "profile" && <Profile />}
+      {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
       <BottomNav screen={screen} count={cart.length} onNavigate={setScreen} />
     </SafeLayout>
   );
@@ -162,8 +185,34 @@ function Onboarding({ onContinue }: { onContinue: () => void }) {
   );
 }
 
-function Auth({ mode, onSubmit, onSwitch }: { mode: "login" | "signup"; onSubmit: () => void; onSwitch: () => void }) {
+function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; onAuthenticated: () => void; onSwitch: () => void }) {
   const signup = mode === "signup";
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      if (signup) {
+        const result = await authService.register({ email, password, fullName, role: "customer" });
+        if (!result.session) {
+          setError("Check your email to confirm your account, then sign in.");
+          return;
+        }
+        await authService.restoreSession("customer");
+      } else {
+        await authService.login(email, password, "customer");
+      }
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <ScreenShell contentContainerStyle={styles.auth}>
         <Text style={styles.logo}>sonman</Text>
@@ -171,12 +220,12 @@ function Auth({ mode, onSubmit, onSwitch }: { mode: "login" | "signup"; onSubmit
           <Text style={styles.authTitle}>{signup ? "Create your account" : "Welcome back"}</Text>
           <Text style={styles.body}>{signup ? "Save picks, track orders, and checkout faster." : "Sign in to continue your shopping journey."}</Text>
         </View>
-        {signup && <Field label="Full name" placeholder="Your name" />}
-        <Field label="Email address" placeholder="name@example.com" />
-        <Field label="Password" placeholder="Enter password" secure />
+        {signup && <Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} />}
+        <Field label="Email address" placeholder="name@example.com" value={email} onChange={setEmail} />
+        <Field label="Password" placeholder="Enter password" secure value={password} onChange={setPassword} />
+        {!!error && <Text style={styles.authError}>{error}</Text>}
         {!signup && <Text style={[styles.link, styles.alignRight]}>Forgot password?</Text>}
-        <PrimaryButton label={signup ? "Create account" : "Sign in"} onPress={onSubmit} />
-        <Pressable style={styles.google}><Text style={styles.googleText}>G   Continue with Google</Text></Pressable>
+        <PrimaryButton label={busy ? "Please wait..." : signup ? "Create account" : "Sign in"} onPress={submit} disabled={busy} />
         <Pressable onPress={onSwitch}><Text style={styles.switchText}>{signup ? "Already have an account? " : "New to Sonman? "}<Text style={styles.link}>{signup ? "Sign in" : "Create account"}</Text></Text></Pressable>
     </ScreenShell>
   );
@@ -309,7 +358,7 @@ function Orders() {
   );
 }
 
-function Profile() {
+function Profile({ onLogout }: { onLogout: () => void }) {
   return (
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your profile</Text>
@@ -321,7 +370,7 @@ function Profile() {
       <Text style={styles.profileLabel}>SUPPORT</Text>
       <ProfileRow icon="?" title="Help centre" subtitle="Orders, refunds, and support" />
       <ProfileRow icon="SET" title="Settings" subtitle="Notifications and privacy" />
-      <Text style={styles.signOut}>Sign out</Text>
+      <Text style={styles.signOut} onPress={onLogout}>Sign out</Text>
     </ScreenScroll>
   );
 }
@@ -383,8 +432,8 @@ function SectionHeader({ title, action, onPress }: { title: string; action: stri
   return <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.link} onPress={onPress}>{action}</Text></View>;
 }
 
-function Field({ label, placeholder, secure }: { label: string; placeholder: string; secure?: boolean }) {
-  return <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.field} placeholder={placeholder} placeholderTextColor={palette.muted} secureTextEntry={secure} /></View>;
+function Field({ label, placeholder, secure, value, onChange }: { label: string; placeholder: string; secure?: boolean; value?: string; onChange?: (text: string) => void }) {
+  return <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.field} placeholder={placeholder} placeholderTextColor={palette.muted} secureTextEntry={secure} value={value} onChangeText={onChange} autoCapitalize="none" /></View>;
 }
 
 function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
@@ -427,7 +476,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 }, flexEnd: { marginLeft: "auto" }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, alignRight: { textAlign: "right" },
   splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.cream }, brandMark: { width: 72, height: 72, borderRadius: 25, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16 }, brandMarkText: { color: palette.goldPale, fontSize: 38, fontWeight: "700" }, logo: { color: palette.black, fontSize: 24, fontWeight: "700" }, splashTag: { color: palette.muted, fontSize: 12, marginTop: 8 },
   onboarding: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22 }, onboardingVisual: { height: "43%", overflow: "hidden", borderRadius: 30, backgroundColor: palette.sand }, fillImage: { width: "100%", height: "100%" }, floatingNote: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 8, alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.94)" }, noteText: { color: palette.black, fontSize: 12, fontWeight: "600" }, onboardingTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, dots: { color: palette.gold, textAlign: "center", marginVertical: 12, letterSpacing: 4 },
-  auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
+  auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
   screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, paddingBottom: BOTTOM_NAV_HEIGHT + BOTTOM_SAFE_SPACE + 24, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
   searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, mic: { color: palette.gold, fontSize: 12, fontWeight: "600" },
   searchDock: { marginHorizontal: -14, paddingHorizontal: 14, backgroundColor: palette.cream }, location: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, marginBottom: 8 }, locationIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, locationLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, locationText: { color: palette.muted, fontSize: 12, marginTop: 1 }, chevron: { color: palette.muted, fontSize: 15, fontWeight: "600" }, aiPill: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 15, backgroundColor: palette.goldPale, marginBottom: 11 }, aiBadge: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.white }, aiBadgeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, aiTitle: { color: palette.black, fontSize: 14, fontWeight: "600" }, arrow: { color: palette.muted, fontSize: 29, lineHeight: 30 }, horizontal: { marginBottom: 13 }, chip: { height: 39, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, marginRight: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white }, chipIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, chipText: { color: palette.black, fontSize: 12, fontWeight: "600" },

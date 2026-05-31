@@ -1,5 +1,6 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { authService } from "./auth";
 import {
   Platform,
   Pressable,
@@ -42,6 +43,8 @@ const NAV_HEIGHT = 68;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const selected = orders.filter((order) => order.id === selectedId)[0];
@@ -55,7 +58,24 @@ export default function App() {
   const pickedUp = () => { updateOrder("Picked up"); setScreen("route"); };
   const delivered = () => { updateOrder("Delivered"); setScreen("assigned"); };
 
-  if (screen === "login") return <SafeLayout><Login onSubmit={() => setScreen("dashboard")} /></SafeLayout>;
+  useEffect(() => {
+    authService.restoreSession("delivery_partner")
+      .then((auth) => {
+        if (auth) {
+          setAuthenticated(true);
+          setScreen("dashboard");
+        }
+      })
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingSession(false));
+    const subscription = authService.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
+  if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return <SafeLayout>
     {screen === "dashboard" && <Dashboard orders={orders} onNavigate={setScreen} onOpen={openOrder} />}
     {screen === "available" && <AvailableOrders orders={orders.filter((order) => order.status === "Available")} onOpen={openOrder} />}
@@ -65,15 +85,42 @@ export default function App() {
     {screen === "route" && selected && <RouteScreen order={selected} onBack={() => setScreen("details")} onDeliver={() => setScreen("delivery")} />}
     {screen === "delivery" && selected && <DeliveryConfirmation order={selected} onBack={() => setScreen("route")} onConfirm={delivered} />}
     {screen === "earnings" && <Earnings />}
-    {screen === "profile" && <Profile onLogout={() => setScreen("login")} />}
+    {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
     <BottomNav screen={screen} onNavigate={setScreen} />
   </SafeLayout>;
 }
 
-function Login({ onSubmit }: { onSubmit: () => void }) {
+function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const [registering, setRegistering] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      if (registering) {
+        const result = await authService.register({ email, password, fullName, role: "delivery_partner" });
+        if (!result.session) {
+          setError("Check your email to confirm your account, then sign in.");
+          return;
+        }
+        await authService.restoreSession("delivery_partner");
+      } else {
+        await authService.login(email, password, "delivery_partner");
+      }
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return <View style={styles.login}>
     <View><Brand /><Text style={styles.loginTitle}>Deliver better.{"\n"}Earn smarter.</Text><Text style={styles.body}>Your daily Sonman delivery workspace, built to keep every stop clear.</Text></View>
-    <View style={styles.loginCard}><Text style={styles.cardTitle}>Partner sign in</Text><Text style={styles.smallMuted}>Welcome back to Sonman Delivery.</Text><Field label="Mobile number" placeholder="+91 98765 43210" /><Field label="Password" placeholder="Enter password" secure /><Text style={styles.linkRight}>Forgot password?</Text><PrimaryButton label="Sign in" onPress={onSubmit} /><Text style={styles.help}>Need help?  <Text style={styles.goldText}>Contact delivery support</Text></Text></View>
+    <View style={styles.loginCard}><Text style={styles.cardTitle}>{registering ? "Partner registration" : "Partner sign in"}</Text><Text style={styles.smallMuted}>{registering ? "Create your delivery partner account." : "Welcome back to Sonman Delivery."}</Text>{registering && <Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} />}<Field label="Email address" placeholder="partner@sonman.in" value={email} onChange={setEmail} /><Field label="Password" placeholder="Enter password" secure value={password} onChange={setPassword} />{!!error && <Text style={styles.error}>{error}</Text>}<PrimaryButton label={busy ? "Please wait..." : registering ? "Create partner account" : "Sign in"} onPress={submit} disabled={busy} /><Text style={styles.linkRight} onPress={() => { setRegistering(!registering); setError(""); }}>{registering ? "Already registered? Sign in" : "New partner? Register"}</Text><Text style={styles.help}>Need help?  <Text style={styles.goldText}>Contact delivery support</Text></Text></View>
   </View>;
 }
 
@@ -135,7 +182,7 @@ function StatusBadge({ status }: { status: OrderStatus }) { const tone = status 
 function Header({ title, subtitle }: { title: string; subtitle: string }) { return <View style={styles.header}><Brand /><Text style={styles.pageTitle}>{title}</Text><Text style={styles.body}>{subtitle}</Text></View>; }
 function Brand() { return <View style={styles.brand}><View style={styles.brandMark}><Text style={styles.brandMarkText}>S</Text></View><Text style={styles.logo}>sonman <Text style={styles.brandSuffix}>delivery</Text></Text></View>; }
 function PageHeader({ title, onBack }: { title: string; onBack: () => void }) { return <View style={styles.pageHeader}><Pressable style={styles.back} onPress={onBack}><Text style={styles.backText}>{"<"}</Text></Pressable><Text style={styles.pageTitle}>{title}</Text><View style={styles.back} /></View>; }
-function Field({ label, placeholder, secure }: { label: string; placeholder: string; secure?: boolean }) { return <View style={styles.fieldGroup}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.field} placeholder={placeholder} placeholderTextColor={palette.muted} secureTextEntry={secure} /></View>; }
+function Field({ label, placeholder, secure, value, onChange }: { label: string; placeholder: string; secure?: boolean; value?: string; onChange?: (text: string) => void }) { return <View style={styles.fieldGroup}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.field} placeholder={placeholder} placeholderTextColor={palette.muted} secureTextEntry={secure} value={value} onChangeText={onChange} autoCapitalize="none" /></View>; }
 function SectionHeader({ title, action, onPress }: { title: string; action?: string; onPress?: () => void }) { return <View style={styles.sectionHeader}><Text style={styles.cardTitle}>{title}</Text>{action && <Text style={styles.goldText} onPress={onPress}>{action}</Text>}</View>; }
 function StatCard({ value, label, note, color, onPress }: { value: string; label: string; note: string; color: string; onPress?: () => void }) { return <Pressable style={[styles.statCard, { backgroundColor: color }]} onPress={onPress}><Text style={styles.statValue}>{value}</Text><Text style={styles.rowTitle}>{label}</Text><Text style={styles.smallMuted}>{note}</Text></Pressable>; }
 function StepBadge({ label }: { label: string }) { return <Text style={styles.stepBadge}>{label}</Text>; }
@@ -154,7 +201,7 @@ function ScreenScroll({ children }: { children: ReactNode }) { const { width } =
 const styles = StyleSheet.create({
   safe: { flex: 1, paddingTop: SAFE_TOP, backgroundColor: palette.cream }, shell: { flex: 1, backgroundColor: palette.cream }, screen: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 18, paddingBottom: NAV_HEIGHT + 34 }, screenWide: { width: 720, alignSelf: "center" },
   flex: { flex: 1 }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, goldText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, greenText: { color: palette.green, fontSize: 14, fontWeight: "700" },
-  login: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22, paddingTop: 26, paddingBottom: 32, backgroundColor: palette.cream }, loginTitle: { color: palette.black, fontSize: 32, lineHeight: 38, fontWeight: "700", marginTop: 50, marginBottom: 10 }, loginCard: { gap: 10, padding: 18, borderWidth: 1, borderColor: palette.line, borderRadius: 24, backgroundColor: palette.white }, help: { color: palette.muted, textAlign: "center", fontSize: 12, marginTop: 4 }, linkRight: { color: palette.gold, textAlign: "right", fontSize: 12, fontWeight: "600" },
+  login: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22, paddingTop: 26, paddingBottom: 32, backgroundColor: palette.cream }, loginTitle: { color: palette.black, fontSize: 32, lineHeight: 38, fontWeight: "700", marginTop: 50, marginBottom: 10 }, loginCard: { gap: 10, padding: 18, borderWidth: 1, borderColor: palette.line, borderRadius: 24, backgroundColor: palette.white }, error: { color: palette.red, fontSize: 12, lineHeight: 18 }, help: { color: palette.muted, textAlign: "center", fontSize: 12, marginTop: 4 }, linkRight: { color: palette.gold, textAlign: "right", fontSize: 12, fontWeight: "600" },
   brand: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 26 }, brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.black }, brandMarkText: { color: palette.goldPale, fontSize: 18, fontWeight: "700" }, logo: { color: palette.black, fontSize: 21, fontWeight: "700" }, brandSuffix: { color: palette.gold, fontSize: 12, fontWeight: "700" },
   header: { marginBottom: 18 }, pageTitle: { color: palette.black, fontSize: 25, lineHeight: 31, fontWeight: "700" }, pageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }, back: { width: 40, height: 40, alignItems: "center", justifyContent: "center" }, backText: { color: palette.black, fontSize: 22, fontWeight: "700" },
   fieldGroup: { gap: 7, marginBottom: 8 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, field: { minHeight: 51, paddingHorizontal: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 14, color: palette.black, backgroundColor: palette.white },

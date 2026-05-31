@@ -15,13 +15,11 @@
 4. Provision Supabase and Firebase development resources.
 5. Link the Supabase CLI and apply migrations with `supabase db push`.
 
-## Implementation Bootstrap
+## Remaining Integrations
 
-The Supabase schema and initial backend API have been generated. Continue by:
+The Supabase schema, authentication service, role-protected clients, and initial
+backend API are in place. Continue by:
 
-1. Bootstrap each mobile directory with the current Expo tooling and keep the
-   Expo-supported React and React Native dependency versions together.
-2. Bootstrap the admin panel as a Next.js 15 TypeScript application.
-3. Connect client screens to the shared backend routes.
-4. Add payment-provider webhooks and server-owned checkout transactions.
-5. Add Firebase device-token registration and notification delivery.
+1. Connect operational client screens to the shared backend routes.
+2. Add payment-provider webhooks and server-owned checkout transactions.
+3. Add Firebase device-token registration and notification delivery.

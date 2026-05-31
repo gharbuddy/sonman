@@ -1,5 +1,6 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { authService } from "./auth";
 import {
   Image,
   Platform,
@@ -33,6 +34,8 @@ const NAV_HEIGHT = 68;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [selected, setSelected] = useState<Product>();
 
@@ -42,7 +45,24 @@ export default function App() {
     setScreen("products");
   };
 
-  if (screen === "login") return <SafeLayout><Login onSubmit={() => setScreen("dashboard")} /></SafeLayout>;
+  useEffect(() => {
+    authService.restoreSession("vendor")
+      .then((auth) => {
+        if (auth) {
+          setAuthenticated(true);
+          setScreen("dashboard");
+        }
+      })
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingSession(false));
+    const subscription = authService.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
+  if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return (
     <SafeLayout>
       {screen === "dashboard" && <Dashboard products={products} onNavigate={setScreen} />}
@@ -52,21 +72,50 @@ export default function App() {
       {screen === "orders" && <Orders />}
       {screen === "inventory" && <Inventory products={products} />}
       {screen === "earnings" && <Earnings />}
-      {screen === "profile" && <Profile onLogout={() => setScreen("login")} />}
+      {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
       <BottomNav screen={screen} onNavigate={setScreen} />
     </SafeLayout>
   );
 }
 
-function Login({ onSubmit }: { onSubmit: () => void }) {
+function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const [registering, setRegistering] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      if (registering) {
+        const result = await authService.register({ email, password, fullName, role: "vendor" });
+        if (!result.session) {
+          setError("Check your email to confirm your account, then sign in.");
+          return;
+        }
+        await authService.restoreSession("vendor");
+      } else {
+        await authService.login(email, password, "vendor");
+      }
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return <View style={styles.login}>
     <View><Brand /><Text style={styles.loginTitle}>Manage your store,{"\n"}beautifully.</Text><Text style={styles.body}>Products, orders, inventory, and earnings in one focused workspace.</Text></View>
     <View style={styles.loginCard}>
-      <Text style={styles.cardTitle}>Vendor sign in</Text><Text style={styles.smallMuted}>Welcome back to your Sonman store.</Text>
-      <Field label="Email address" placeholder="vendor@sonman.in" />
-      <Field label="Password" placeholder="Enter password" secure />
-      <Text style={styles.linkRight}>Forgot password?</Text>
-      <PrimaryButton label="Sign in to dashboard" onPress={onSubmit} />
+      <Text style={styles.cardTitle}>{registering ? "Register your store" : "Vendor sign in"}</Text><Text style={styles.smallMuted}>{registering ? "Create your vendor account to get started." : "Welcome back to your Sonman store."}</Text>
+      {registering && <Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} />}
+      <Field label="Email address" placeholder="vendor@sonman.in" value={email} onChange={setEmail} />
+      <Field label="Password" placeholder="Enter password" secure value={password} onChange={setPassword} />
+      {!!error && <Text style={styles.error}>{error}</Text>}
+      <PrimaryButton label={busy ? "Please wait..." : registering ? "Create vendor account" : "Sign in to dashboard"} onPress={submit} />
+      <Text style={styles.linkRight} onPress={() => { setRegistering(!registering); setError(""); }}>{registering ? "Already registered? Sign in" : "New vendor? Register"}</Text>
       <Text style={styles.help}>Need help?  <Text style={styles.goldText}>Contact vendor support</Text></Text>
     </View>
   </View>;
@@ -185,7 +234,7 @@ function ScreenScroll({ children }: { children: ReactNode }) { const { width } =
 const styles = StyleSheet.create({
   safe: { flex: 1, paddingTop: SAFE_TOP, backgroundColor: palette.cream }, shell: { flex: 1, backgroundColor: palette.cream }, screen: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 18, paddingBottom: NAV_HEIGHT + 36 }, screenWide: { width: 720, alignSelf: "center" },
   flex: { flex: 1 }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, goldText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, greenText: { color: palette.green, fontSize: 12, fontWeight: "700", marginTop: 7 },
-  login: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22, paddingTop: 26, paddingBottom: 32, backgroundColor: palette.cream }, loginTitle: { color: palette.black, fontSize: 32, lineHeight: 38, fontWeight: "700", marginTop: 50, marginBottom: 10 }, loginCard: { gap: 10, padding: 18, borderWidth: 1, borderColor: palette.line, borderRadius: 24, backgroundColor: palette.white }, help: { color: palette.muted, textAlign: "center", fontSize: 12, marginTop: 4 }, linkRight: { color: palette.gold, textAlign: "right", fontSize: 12, fontWeight: "600" },
+  login: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22, paddingTop: 26, paddingBottom: 32, backgroundColor: palette.cream }, loginTitle: { color: palette.black, fontSize: 32, lineHeight: 38, fontWeight: "700", marginTop: 50, marginBottom: 10 }, loginCard: { gap: 10, padding: 18, borderWidth: 1, borderColor: palette.line, borderRadius: 24, backgroundColor: palette.white }, error: { color: palette.red, fontSize: 12, lineHeight: 18 }, help: { color: palette.muted, textAlign: "center", fontSize: 12, marginTop: 4 }, linkRight: { color: palette.gold, textAlign: "right", fontSize: 12, fontWeight: "600" },
   brand: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 26 }, brandMark: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.black }, brandMarkText: { color: palette.goldPale, fontSize: 18, fontWeight: "700" }, logo: { color: palette.black, fontSize: 21, fontWeight: "700" }, vendor: { color: palette.gold, fontSize: 12, fontWeight: "700" },
   header: { flexDirection: "row", alignItems: "flex-end", gap: 12, marginBottom: 18 }, pageTitle: { color: palette.black, fontSize: 25, lineHeight: 31, fontWeight: "700" }, headerAction: { width: 45, height: 45, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.black }, headerActionText: { color: palette.white, fontSize: 25, lineHeight: 28 }, pageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }, back: { width: 40, height: 40, alignItems: "center", justifyContent: "center" }, backText: { color: palette.black, fontSize: 37, lineHeight: 38 },
   hero: { padding: 18, borderRadius: 22, backgroundColor: palette.black }, heroEyebrow: { color: palette.goldPale, fontSize: 12, fontWeight: "700" }, heroValue: { color: palette.white, fontSize: 31, fontWeight: "700", marginTop: 9 }, heroBody: { color: palette.greenPale, fontSize: 12, marginTop: 4 }, heroLink: { color: palette.goldPale, fontSize: 12, fontWeight: "700", marginTop: 17 }, heroValueDark: { color: palette.black, fontSize: 31, fontWeight: "700", marginVertical: 5 },

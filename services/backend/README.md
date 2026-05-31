@@ -17,7 +17,7 @@ All application routes are versioned under `/api/v1`.
 | Route | Purpose |
 | --- | --- |
 | `POST /auth/register` | Create customer, vendor, or delivery-partner Auth accounts |
-| `POST /auth/login` | Create a Supabase session |
+| `POST /auth/login` | Create a role-qualified Supabase session |
 | `GET /me` | Read the authenticated application profile |
 | `POST /profiles/vendor` | Complete a vendor profile |
 | `POST /profiles/delivery-partner` | Complete a delivery-partner profile |
@@ -33,3 +33,7 @@ All application routes are versioned under `/api/v1`.
 Use `.env.example` as the template for local environment values. Keep privileged
 credentials such as the Supabase service role key and Firebase private key only
 in server-side environments.
+
+Login requests include `email`, `password`, and the target application `role`.
+The API rejects valid credentials when the active profile does not match that
+role.

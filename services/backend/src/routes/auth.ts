@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { supabaseAuth } from "../lib/supabase.js";
+import { supabaseAdmin, supabaseAuth } from "../lib/supabase.js";
 
 const router = Router();
 
@@ -25,10 +25,23 @@ router.post("/register", async (req, res) => {
 });
 
 router.post("/login", async (req, res) => {
-  const input = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body);
-  const { data, error } = await supabaseAuth.auth.signInWithPassword(input);
+  const input = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+    role: z.enum(["customer", "vendor", "delivery_partner", "admin"]),
+  }).parse(req.body);
+  const { data, error } = await supabaseAuth.auth.signInWithPassword({
+    email: input.email,
+    password: input.password,
+  });
   if (error) {
     res.status(401).json({ error: error.message });
+    return;
+  }
+  const { data: profile } = await supabaseAdmin
+    .from("users").select("role, is_active").eq("id", data.user.id).single();
+  if (!profile?.is_active || profile.role !== input.role) {
+    res.status(403).json({ error: "This account cannot access the requested application" });
     return;
   }
   res.json(data);
