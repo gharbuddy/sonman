@@ -108,6 +108,18 @@ export default function App() {
       .catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Ordering data could not be loaded."));
   }, [authenticated]);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    const channel = authService.supabase.channel("customer-order-lifecycle")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        void ordersService.listOrders()
+          .then(setOrders)
+          .catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Orders could not be refreshed."));
+      })
+      .subscribe();
+    return () => { void authService.supabase.removeChannel(channel); };
+  }, [authenticated]);
+
   const openListing = (nextCategory = "Trending") => {
     setCategory(nextCategory);
     setScreen("listing");

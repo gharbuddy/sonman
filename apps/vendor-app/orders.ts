@@ -14,9 +14,6 @@ const NEXT_STATUS: Record<string, string> = {
   pending: "accepted",
   accepted: "packed",
   packed: "ready_for_pickup",
-  ready_for_pickup: "picked_up",
-  picked_up: "out_for_delivery",
-  out_for_delivery: "delivered",
 };
 
 export type VendorOrder = {

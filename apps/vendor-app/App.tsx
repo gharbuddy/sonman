@@ -84,6 +84,14 @@ export default function App() {
     if (authenticated) void Promise.all([loadProducts(), loadOrders()]);
   }, [authenticated]);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    const channel = authService.supabase.channel("vendor-order-lifecycle")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => void loadOrders())
+      .subscribe();
+    return () => { void authService.supabase.removeChannel(channel); };
+  }, [authenticated]);
+
   if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return (

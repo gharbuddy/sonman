@@ -1,6 +1,7 @@
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authService } from "./auth";
+import { createDeliveryOrdersService, type DeliveryOrder as Order, type DeliveryOrderStatus as OrderStatus } from "./orders";
 import {
   Platform,
   Pressable,
@@ -15,21 +16,6 @@ import {
 } from "react-native";
 
 type Screen = "login" | "dashboard" | "available" | "assigned" | "details" | "pickup" | "route" | "delivery" | "earnings" | "profile";
-type OrderStatus = "Available" | "Assigned" | "Picked up" | "Delivered";
-type Order = {
-  id: string;
-  customer: string;
-  vendor: string;
-  pickup: string;
-  delivery: string;
-  distance: string;
-  expected: string;
-  value: number;
-  earnings: number;
-  status: OrderStatus;
-  items: string;
-};
-
 const palette = {
   cream: "#F8F6F1", white: "#FFFFFF", sand: "#F0ECE4", line: "#E7E1D8",
   black: "#171717", muted: "#76716A", gold: "#A97B2C", goldPale: "#F6E8C6",
@@ -46,17 +32,34 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderError, setOrderError] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
+  const ordersService = useMemo(() => createDeliveryOrdersService(authService.supabase), []);
   const selected = orders.filter((order) => order.id === selectedId)[0];
 
   const openOrder = (order: Order) => { setSelectedId(order.id); setScreen("details"); };
-  const updateOrder = (status: OrderStatus) => {
-    if (selected) setOrders((current) => current.map((order) => order.id === selected.id ? { ...order, status } : order));
+  const loadOrders = async () => {
+    try {
+      setOrders(await ordersService.list());
+      setOrderError("");
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "Delivery orders could not be loaded.");
+    }
   };
-  const accept = () => { updateOrder("Assigned"); setScreen("assigned"); };
+  const runOrderAction = async (action: () => Promise<void>, nextScreen: Screen) => {
+    try {
+      setOrderError("");
+      await action();
+      await loadOrders();
+      setScreen(nextScreen);
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "The delivery order could not be updated.");
+    }
+  };
+  const accept = async () => { if (selected) await runOrderAction(() => ordersService.accept(selected.id), "assigned"); };
   const reject = () => { if (selected) setOrders((current) => current.filter((order) => order.id !== selected.id)); setScreen("available"); };
-  const pickedUp = () => { updateOrder("Picked up"); setScreen("route"); };
-  const delivered = () => { updateOrder("Delivered"); setScreen("assigned"); };
+  const pickedUp = async () => { if (selected) await runOrderAction(() => ordersService.markPickedUp(selected.id), "route"); };
+  const delivered = async (otp: string) => { if (selected) await runOrderAction(() => ordersService.markDelivered(selected.id, otp), "assigned"); };
 
   useEffect(() => {
     authService.restoreSession("delivery_partner")
@@ -74,10 +77,17 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    void loadOrders();
+    const channel = ordersService.subscribe(() => void loadOrders());
+    return () => { void authService.supabase.removeChannel(channel); };
+  }, [authenticated]);
+
   if (checkingSession) return <SafeLayout><View style={styles.login}><Brand /><Text style={styles.body}>Restoring your session...</Text></View></SafeLayout>;
   if (!authenticated || screen === "login") return <SafeLayout><Login onAuthenticated={() => { setAuthenticated(true); setScreen("dashboard"); }} /></SafeLayout>;
   return <SafeLayout>
-    {screen === "dashboard" && <Dashboard orders={orders} onNavigate={setScreen} onOpen={openOrder} />}
+    {screen === "dashboard" && <Dashboard orders={orders} error={orderError} onNavigate={setScreen} onOpen={openOrder} />}
     {screen === "available" && <AvailableOrders orders={orders.filter((order) => order.status === "Available")} onOpen={openOrder} />}
     {screen === "assigned" && <AssignedOrders orders={orders.filter((order) => order.status !== "Available")} onOpen={openOrder} />}
     {screen === "details" && selected && <OrderDetails order={selected} onBack={() => setScreen(selected.status === "Available" ? "available" : "assigned")} onAccept={accept} onReject={reject} onPickup={() => setScreen("pickup")} onRoute={() => setScreen("route")} />}
@@ -124,12 +134,13 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
   </View>;
 }
 
-function Dashboard({ orders, onNavigate, onOpen }: { orders: Order[]; onNavigate: (screen: Screen) => void; onOpen: (order: Order) => void }) {
+function Dashboard({ orders, error, onNavigate, onOpen }: { orders: Order[]; error: string; onNavigate: (screen: Screen) => void; onOpen: (order: Order) => void }) {
   const available = orders.filter((order) => order.status === "Available");
   const active = orders.filter((order) => order.status === "Assigned" || order.status === "Picked up");
   return <ScreenScroll>
     <Header title="Good afternoon, Arjun" subtitle="Ready for your next delivery?" />
     <View style={styles.statusCard}><View><Text style={styles.statusKicker}>YOU ARE ONLINE</Text><Text style={styles.statusTitle}>Accepting new orders</Text><Text style={styles.smallMuted}>Your zone: Central Bengaluru</Text></View><View style={styles.onlineDot} /></View>
+    {!!error && <Text style={styles.error}>{error}</Text>}
     <View style={styles.statGrid}><StatCard value={String(active.length)} label="Active orders" note="Keep moving" color={palette.goldPale} onPress={() => onNavigate("assigned")} /><StatCard value={String(available.length)} label="Available" note="Near your zone" color={palette.greenPale} onPress={() => onNavigate("available")} /><StatCard value="Rs 684" label="Today earned" note="8 deliveries" color={palette.bluePale} onPress={() => onNavigate("earnings")} /><StatCard value="4.9" label="Your rating" note="142 reviews" color={palette.sand} /></View>
     <SectionHeader title="Current delivery" action="Assigned orders" onPress={() => onNavigate("assigned")} />
     {active.length ? <OrderCard order={active[0]} onPress={() => onOpen(active[0])} /> : <Empty text="No active deliveries right now." />}
@@ -158,10 +169,10 @@ function RouteScreen({ order, onBack, onDeliver }: { order: Order; onBack: () =>
   return <ScreenScroll><PageHeader title="Delivery route" onBack={onBack} /><View style={styles.map}><View style={styles.mapRoadA} /><View style={styles.mapRoadB} /><View style={styles.mapRoadC} /><View style={[styles.pin, styles.pinStart]}><Text style={styles.pinText}>P</Text></View><View style={[styles.pin, styles.pinEnd]}><Text style={styles.pinText}>D</Text></View><View style={styles.mapEta}><Text style={styles.statusKicker}>ETA</Text><Text style={styles.mapEtaValue}>18 min</Text></View></View><View style={styles.routeCard}><Text style={styles.statusKicker}>DELIVER TO</Text><Text style={styles.cardTitle}>{order.customer}</Text><Text style={styles.body}>{order.delivery}</Text><View style={styles.routeStats}><Text style={styles.rowTitle}>{order.distance}</Text><Text style={styles.rowTitle}>{order.expected}</Text></View></View><PrimaryButton label="Arrived - confirm delivery" onPress={onDeliver} /></ScreenScroll>;
 }
 
-function DeliveryConfirmation({ order, onBack, onConfirm }: { order: Order; onBack: () => void; onConfirm: () => void }) {
+function DeliveryConfirmation({ order, onBack, onConfirm }: { order: Order; onBack: () => void; onConfirm: (otp: string) => void }) {
   const [otp, setOtp] = useState("");
   const [photo, setPhoto] = useState(false);
-  return <ScreenScroll><PageHeader title="Delivery confirmation" onBack={onBack} /><StepBadge label="FINAL STEP" /><Text style={styles.confirmTitle}>Verify and complete{"\n"}the delivery.</Text><Text style={styles.body}>Ask {order.customer} for the 4-digit delivery OTP.</Text><Text style={styles.sectionLabel}>DELIVERY OTP</Text><TextInput style={styles.otp} placeholder="0  0  0  0" placeholderTextColor={palette.muted} keyboardType="numeric" maxLength={4} value={otp} onChangeText={setOtp} /><Text style={styles.sectionLabel}>DELIVERY PROOF</Text><Pressable style={[styles.upload, photo && styles.uploadDone]} onPress={() => setPhoto(true)}><Text style={styles.uploadIcon}>{photo ? "OK" : "+"}</Text><Text style={styles.rowTitle}>{photo ? "Proof photo added" : "Add delivery proof photo"}</Text><Text style={styles.smallMuted}>{photo ? "Photo placeholder attached" : "Capture the delivered package at the address"}</Text></Pressable><PrimaryButton label="Mark delivered" onPress={onConfirm} disabled={otp.length !== 4 || !photo} /></ScreenScroll>;
+  return <ScreenScroll><PageHeader title="Delivery confirmation" onBack={onBack} /><StepBadge label="FINAL STEP" /><Text style={styles.confirmTitle}>Verify and complete{"\n"}the delivery.</Text><Text style={styles.body}>Ask {order.customer} for the 4-digit delivery OTP.</Text><Text style={styles.sectionLabel}>DELIVERY OTP</Text><TextInput style={styles.otp} placeholder="0  0  0  0" placeholderTextColor={palette.muted} keyboardType="numeric" maxLength={4} value={otp} onChangeText={setOtp} /><Text style={styles.sectionLabel}>DELIVERY PROOF</Text><Pressable style={[styles.upload, photo && styles.uploadDone]} onPress={() => setPhoto(true)}><Text style={styles.uploadIcon}>{photo ? "OK" : "+"}</Text><Text style={styles.rowTitle}>{photo ? "Proof photo added" : "Add delivery proof photo"}</Text><Text style={styles.smallMuted}>{photo ? "Photo placeholder attached" : "Capture the delivered package at the address"}</Text></Pressable><PrimaryButton label="Mark delivered" onPress={() => onConfirm(otp)} disabled={otp.length !== 4 || !photo} /></ScreenScroll>;
 }
 
 function Earnings() {

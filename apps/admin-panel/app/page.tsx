@@ -35,8 +35,19 @@ type Order = {
   vendors: { business_name: string } | null;
   order_items: { product_name: string; quantity: number }[];
 };
+type DeliveryPartner = {
+  id: string;
+  approval_status: string;
+  availability_status: string;
+  users: { full_name: string } | null;
+};
+type DeliveryAssignment = {
+  order_id: string;
+  delivery_partner_id: string;
+  status: string;
+};
 const statusLabels: Record<string, string> = { pending: "Pending", accepted: "Accepted", packed: "Packed", ready_for_pickup: "Ready for Pickup", picked_up: "Picked Up", out_for_delivery: "Out for Delivery", delivered: "Delivered" };
-const nextStatus: Record<string, string> = { pending: "accepted", accepted: "packed", packed: "ready_for_pickup", ready_for_pickup: "picked_up", picked_up: "out_for_delivery", out_for_delivery: "delivered" };
+const nextStatus: Record<string, string> = { pending: "accepted", accepted: "packed", packed: "ready_for_pickup" };
 
 export default function AdminPanel() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -49,6 +60,8 @@ export default function AdminPanel() {
   const [productsError, setProductsError] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersError, setOrdersError] = useState("");
+  const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartner[]>([]);
+  const [deliveryAssignments, setDeliveryAssignments] = useState<DeliveryAssignment[]>([]);
 
   const loadProducts = async () => {
     const { data, error: loadError } = await authService.supabase.from("products")
@@ -72,6 +85,19 @@ export default function AdminPanel() {
     setOrders(data as unknown as Order[]);
     setOrdersError("");
   };
+  const loadDelivery = async () => {
+    const [{ data: partners, error: partnersError }, { data: assignments, error: assignmentsError }] = await Promise.all([
+      authService.supabase.from("delivery_partners").select("id, approval_status, availability_status, users(full_name)").eq("approval_status", "approved").order("created_at"),
+      authService.supabase.from("delivery_assignments").select("order_id, delivery_partner_id, status").in("status", ["assigned", "accepted", "picked_up"]),
+    ]);
+    const loadError = partnersError ?? assignmentsError;
+    if (loadError) {
+      setOrdersError(loadError.message);
+      return;
+    }
+    setDeliveryPartners(partners as unknown as DeliveryPartner[]);
+    setDeliveryAssignments(assignments as DeliveryAssignment[]);
+  };
 
   useEffect(() => {
     authService.restoreSession("admin")
@@ -85,7 +111,7 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) void Promise.all([loadProducts(), loadOrders()]);
+    if (authenticated) void Promise.all([loadProducts(), loadOrders(), loadDelivery()]);
   }, [authenticated]);
 
   const setProductActive = async (product: Product, isActive: boolean) => {
@@ -105,6 +131,18 @@ export default function AdminPanel() {
       return;
     }
     await loadOrders();
+  };
+  const assignDeliveryPartner = async (orderId: string, deliveryPartnerId: string) => {
+    if (!deliveryPartnerId) return;
+    const { error: updateError } = await authService.supabase.rpc("admin_assign_delivery_partner", {
+      target_order_id: orderId,
+      target_delivery_partner_id: deliveryPartnerId,
+    });
+    if (updateError) {
+      setOrdersError(updateError.message);
+      return;
+    }
+    await Promise.all([loadOrders(), loadDelivery()]);
   };
 
   const login = async (event: FormEvent<HTMLFormElement>) => {
@@ -157,7 +195,7 @@ export default function AdminPanel() {
         {ordersError && <p className="auth-error">{ordersError}</p>}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Order</th><th>Customer</th><th>Vendor</th><th>Items</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Order</th><th>Customer</th><th>Vendor</th><th>Items</th><th>Total</th><th>Status</th><th>Delivery partner</th><th>Action</th></tr></thead>
             <tbody>
               {orders.map((order) => <tr key={order.id}>
                 <td><b>{order.order_number}</b></td>
@@ -166,9 +204,17 @@ export default function AdminPanel() {
                 <td>{order.order_items.map((item) => `${item.quantity} x ${item.product_name}`).join(", ")}</td>
                 <td>Rs {Number(order.total_amount).toLocaleString("en-IN")}</td>
                 <td><span className="badge">{statusLabels[order.status] ?? order.status}</span></td>
+                <td>{deliveryAssignments.find((assignment) => assignment.order_id === order.id)
+                  ? deliveryPartners.find((partner) => partner.id === deliveryAssignments.find((assignment) => assignment.order_id === order.id)?.delivery_partner_id)?.users?.full_name ?? "Assigned partner"
+                  : order.status === "ready_for_pickup"
+                    ? <select className="unassigned" defaultValue="" onChange={(event) => void assignDeliveryPartner(order.id, event.target.value)}>
+                      <option value="" disabled>Assign partner</option>
+                      {deliveryPartners.map((partner) => <option key={partner.id} value={partner.id}>{partner.users?.full_name || "Delivery partner"} ({partner.availability_status})</option>)}
+                    </select>
+                    : "-"}</td>
                 <td>{nextStatus[order.status] ? <button className="approve" onClick={() => advanceOrder(order)}>Advance status</button> : "-"}</td>
               </tr>)}
-              {!orders.length && <tr><td colSpan={7}>No incoming orders yet.</td></tr>}
+              {!orders.length && <tr><td colSpan={8}>No incoming orders yet.</td></tr>}
             </tbody>
           </table>
         </div>
