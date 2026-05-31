@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@sonman/auth-service";
 
 export type Category = { id: string; name: string };
+export type DeliverySize = "small" | "medium" | "large" | "heavy";
 export type VendorProduct = {
   id: string;
   categoryId: string;
@@ -12,6 +13,7 @@ export type VendorProduct = {
   image: string;
   sku: string;
   description: string;
+  deliverySize: DeliverySize;
 };
 
 type ProductRow = {
@@ -22,6 +24,7 @@ type ProductRow = {
   description: string | null;
   price: number | string;
   is_active: boolean;
+  delivery_size: DeliverySize;
   categories: { name: string } | null;
   inventory: { quantity_available: number }[] | null;
   product_images: { storage_path: string; is_primary: boolean; sort_order: number }[] | null;
@@ -44,6 +47,7 @@ const mapProduct = (supabase: SupabaseClient, row: ProductRow): VendorProduct =>
     image: image ? supabase.storage.from("product-images").getPublicUrl(image.storage_path).data.publicUrl : "",
     sku: row.slug,
     description: row.description ?? "",
+    deliverySize: row.delivery_size,
   };
 };
 
@@ -55,15 +59,15 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
   },
   async list() {
     const { data, error } = await supabase.from("products")
-      .select("id, category_id, name, slug, description, price, is_active, categories(name), inventory(quantity_available), product_images(storage_path, is_primary, sort_order)")
+      .select("id, category_id, name, slug, description, price, is_active, delivery_size, categories(name), inventory(quantity_available), product_images(storage_path, is_primary, sort_order)")
       .is("deleted_at", null).order("created_at", { ascending: false });
     if (error) throw error;
     return (data as unknown as ProductRow[]).map((row) => mapProduct(supabase, row));
   },
-  async save(input: { product?: VendorProduct; categoryId: string; name: string; description: string; price: number; stock: number; image?: { uri: string; mimeType?: string | null; fileName?: string | null } }) {
+  async save(input: { product?: VendorProduct; categoryId: string; name: string; description: string; price: number; stock: number; deliverySize: DeliverySize; image?: { uri: string; mimeType?: string | null; fileName?: string | null } }) {
     const { data: vendor, error: vendorError } = await supabase.from("vendors").select("id").single();
     if (vendorError || !vendor) throw vendorError ?? new Error("Vendor profile is unavailable.");
-    const values = { vendor_id: vendor.id, category_id: input.categoryId, name: input.name.trim(), slug: slugify(input.name), description: input.description.trim(), price: input.price, currency: "INR" };
+    const values = { vendor_id: vendor.id, category_id: input.categoryId, name: input.name.trim(), slug: slugify(input.name), description: input.description.trim(), price: input.price, currency: "INR", delivery_size: input.deliverySize };
     const query = input.product ? supabase.from("products").update(values).eq("id", input.product.id) : supabase.from("products").insert(values);
     const { data: product, error } = await query.select("id").single();
     if (error) throw error;
@@ -81,4 +85,3 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
     }
   },
 });
-

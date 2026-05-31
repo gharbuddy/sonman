@@ -15,6 +15,9 @@ export type CustomerOrder = {
   orderNumber: string;
   status: string;
   total: number;
+  deliveryFee: number;
+  expectedDeliveryDate: string;
+  deliveryQuoteRequired: boolean;
   createdAt: string;
   items: { id: string; name: string; quantity: number }[];
 };
@@ -32,16 +35,17 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
     const { error } = await supabase.rpc("set_cart_item", { product: productId, item_quantity: quantity });
     if (error) throw error;
   },
-  async placeOrder() {
+  async placeOrder(deliveryDistanceKm = 0) {
     const { error } = await supabase.rpc("place_cart_order", {
       delivery_address: { label: "Placeholder address", payment: "placeholder" },
       policy_acknowledged: true,
+      delivery_distance_km: deliveryDistanceKm,
     });
     if (error) throw error;
   },
   async listOrders(): Promise<CustomerOrder[]> {
     const { data, error } = await supabase.from("orders")
-      .select("id, order_number, status, total_amount, created_at, order_items(id, product_name, quantity)")
+      .select("id, order_number, status, total_amount, delivery_fee_amount, expected_delivery_date, delivery_quote_required, created_at, order_items(id, product_name, quantity)")
       .order("created_at", { ascending: false });
     if (error) throw error;
     return data.map((order) => ({
@@ -49,6 +53,9 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
       orderNumber: order.order_number,
       status: order.status,
       total: Number(order.total_amount),
+      deliveryFee: Number(order.delivery_fee_amount),
+      expectedDeliveryDate: order.expected_delivery_date,
+      deliveryQuoteRequired: order.delivery_quote_required,
       createdAt: order.created_at,
       items: order.order_items.map((item) => ({ id: item.id, name: item.product_name, quantity: item.quantity })),
     }));

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authService } from "./auth";
 import { createCustomerOrdersService, ORDER_STATUS_LABELS, type CustomerOrder } from "./orders";
 import { loadActiveProducts, type CustomerProduct as Product } from "./products";
+import { formatDeliveryDate, quoteDelivery } from "./delivery";
 import {
   Image,
   Platform,
@@ -56,6 +57,7 @@ const discount = ({ price, oldPrice }: Product) =>
 const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
 const BOTTOM_NAV_HEIGHT = 68;
 const BOTTOM_SAFE_SPACE = Platform.OS === "android" ? 36 : 18;
+const CHECKOUT_DISTANCE_KM = 0;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
@@ -149,7 +151,7 @@ export default function App() {
     setPlacingOrder(true);
     setOrderError("");
     try {
-      await ordersService.placeOrder();
+      await ordersService.placeOrder(CHECKOUT_DISTANCE_KM);
       setCart({});
       setOrders(await ordersService.listOrders());
       setScreen("orders");
@@ -162,6 +164,7 @@ export default function App() {
   const cartProducts = products.filter((product) => cart[product.id]);
   const cartCount = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
   const subtotal = cartProducts.reduce((sum, product) => sum + product.price * cart[product.id], 0);
+  const deliveryQuote = quoteDelivery(cartProducts, CHECKOUT_DISTANCE_KM);
 
   if (checkingSession || screen === "splash") return <SafeLayout><Splash /></SafeLayout>;
   if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("login")} /></SafeLayout>;
@@ -199,7 +202,7 @@ export default function App() {
         />
       )}
       {screen === "cart" && <Cart items={cartProducts} quantities={cart} subtotal={subtotal} error={orderError} onQuantity={setCartQuantity} onCheckout={() => setScreen("checkout")} />}
-      {screen === "checkout" && <Checkout subtotal={subtotal} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onPlaceOrder={placeOrder} />}
+      {screen === "checkout" && <Checkout subtotal={subtotal} quote={deliveryQuote} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onPlaceOrder={placeOrder} />}
       {screen === "orders" && <Orders orders={orders} error={orderError} />}
       {screen === "profile" && <Profile onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
       <BottomNav screen={screen} count={cartCount} onNavigate={setScreen} />
@@ -361,7 +364,7 @@ function Details({ product, inCart, onBack, onCart, onBuy }: { product: Product;
       <Text style={styles.detailTitle}>{product.name}</Text>
       <View style={styles.ratingLine}><Text style={styles.rating}>★ {product.rating}</Text><Text style={styles.smallMuted}>{product.reviews} verified reviews</Text></View>
       <View style={styles.priceLine}><Text style={styles.detailPrice}>{money(product.price)}</Text><Text style={styles.oldPrice}>{money(product.oldPrice)}</Text><Text style={styles.discount}>{discount(product)}% off</Text></View>
-      <View style={styles.deliveryCard}><Text style={styles.deliveryIcon}>FAST</Text><View><Text style={styles.deliveryTitle}>Free delivery by {product.delivery}</Text><Text style={styles.smallMuted}>Order within the next 4 hours</Text></View></View>
+      <View style={styles.deliveryCard}><Text style={styles.deliveryIcon}>DEL</Text><View><Text style={styles.deliveryTitle}>{product.deliverySize === "large" || product.deliverySize === "heavy" ? "Delivery charge will be confirmed by Sonman before dispatch." : "Standard delivery available"}</Text><Text style={styles.smallMuted}>No same-day delivery</Text></View></View>
       <Text style={styles.sectionTitle}>About this product</Text>
       <Text style={styles.body}>{product.description}</Text>
       <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Select size</Text>
@@ -376,7 +379,7 @@ function Cart({ items, quantities, subtotal, error, onQuantity, onCheckout }: { 
     <ScreenScroll>
       <Text style={styles.pageTitle}>Your cart</Text>
       <Text style={styles.body}>{items.length} items ready for checkout</Text>
-      <View style={styles.deliveryBanner}><Text style={styles.deliveryIcon}>FAST</Text><Text style={styles.deliveryTitle}>You unlocked free delivery</Text></View>
+      <View style={styles.deliveryBanner}><Text style={styles.deliveryIcon}>DEL</Text><Text style={styles.deliveryTitle}>Delivery quote is shown before payment</Text></View>
       {items.map((product) => <CartItem key={product.id} product={product} quantity={quantities[product.id]} onQuantity={(quantity) => onQuantity(product.id, quantity)} />)}
       {!items.length && <Empty title="Your cart is empty" subtitle="Add a few favourites and they will appear here." />}
       {!!error && <Text style={styles.authError}>{error}</Text>}
@@ -386,21 +389,21 @@ function Cart({ items, quantities, subtotal, error, onQuantity, onCheckout }: { 
   );
 }
 
-function Checkout({ subtotal, busy, error, onBack, onPlaceOrder }: { subtotal: number; busy: boolean; error: string; onBack: () => void; onPlaceOrder: () => void }) {
+function Checkout({ subtotal, quote, busy, error, onBack, onPlaceOrder }: { subtotal: number; quote: ReturnType<typeof quoteDelivery>; busy: boolean; error: string; onBack: () => void; onPlaceOrder: () => void }) {
   const [policyAccepted, setPolicyAccepted] = useState(false);
   return (
     <ScreenScroll>
       <PageHeader title="Checkout" onBack={onBack} />
       <CheckoutSection icon="PIN" title="Delivery address" action="Change"><Text style={styles.rowTitle}>Arjun Mehta</Text><Text style={styles.smallMuted}>24 Park View Road, Bengaluru 560001</Text></CheckoutSection>
       <CheckoutSection icon="PAY" title="Payment method" action="Prepaid"><Text style={styles.rowTitle}>Online Payment Only</Text><Text style={styles.smallMuted}>Payment integration is pending. The order stores a placeholder payment record for now.</Text></CheckoutSection>
-      <CheckoutSection icon="BOX" title="Delivery option" action="Edit"><Text style={styles.rowTitle}>Standard delivery</Text><Text style={styles.smallMuted}>Arrives tomorrow · Free</Text></CheckoutSection>
-      <OrderTotal subtotal={subtotal} />
+      <CheckoutSection icon="BOX" title="Delivery option" action={`Zone ${quote.zone}`}><Text style={styles.rowTitle}>Standard delivery</Text><Text style={styles.smallMuted}>Expected by {formatDeliveryDate(quote.expectedDate)}</Text><Text style={styles.smallMuted}>{quote.fee === null ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(quote.fee)}`}</Text></CheckoutSection>
+      <OrderTotal subtotal={subtotal} deliveryFee={quote.fee} />
       <Pressable style={styles.policyRow} onPress={() => setPolicyAccepted((accepted) => !accepted)}>
         <View style={[styles.checkbox, policyAccepted && styles.checkboxChecked]}><Text style={styles.checkboxMark}>{policyAccepted ? "✓" : ""}</Text></View>
         <Text style={styles.policyText}>I understand this order is prepaid. Cancellation is not allowed after order confirmation. Replacement is allowed only for damaged, defective, or incorrect products reported at delivery.</Text>
       </Pressable>
       {!!error && <Text style={styles.authError}>{error}</Text>}
-      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal)}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted} />
+      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal + (quote.fee ?? 0))}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted} />
     </ScreenScroll>
   );
 }
@@ -412,7 +415,7 @@ function Orders({ orders, error }: { orders: CustomerOrder[]; error: string }) {
       <Text style={styles.body}>Track deliveries and revisit past purchases.</Text>
       <View style={styles.tabs}><Text style={styles.tabActive}>Active</Text><Text style={styles.tab}>Past orders</Text></View>
       {!!error && <Text style={styles.authError}>{error}</Text>}
-      {orders.map((order) => <View key={order.id} style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{order.orderNumber}</Text><Text style={order.status === "delivered" ? styles.statusDelivered : styles.statusActive}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{order.items.map((item) => `${item.quantity} x ${item.name}`).join(", ")}</Text><Text style={styles.totalPrice}>{money(order.total)}</Text><Text style={styles.policyLabel}>Prepaid order</Text><Text style={styles.smallMuted}>Replacement only if issue reported at delivery</Text></View>)}
+      {orders.map((order) => <View key={order.id} style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{order.orderNumber}</Text><Text style={order.status === "delivered" ? styles.statusDelivered : styles.statusActive}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{order.items.map((item) => `${item.quantity} x ${item.name}`).join(", ")}</Text><Text style={styles.totalPrice}>{money(order.total)}</Text><Text style={styles.smallMuted}>Expected by {order.expectedDeliveryDate}</Text><Text style={styles.smallMuted}>{order.deliveryQuoteRequired ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(order.deliveryFee)}`}</Text><Text style={styles.policyLabel}>Prepaid order</Text><Text style={styles.smallMuted}>Replacement only if issue reported at delivery</Text></View>)}
       {!orders.length && <Empty title="No orders yet" subtitle="Your real orders will appear here after checkout." />}
     </ScreenScroll>
   );
@@ -459,7 +462,7 @@ function ProductCard({ product, onPress, width }: { product: Product; onPress: (
   return (
     <Pressable style={[styles.productCard, width ? { width } : undefined]} onPress={onPress}>
       <View><Image source={{ uri: product.image }} style={styles.productImage} /><Text style={styles.heart}>♡</Text>{product.badge && <Text style={styles.badge}>{product.badge}</Text>}</View>
-      <View style={styles.productCopy}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.productName} numberOfLines={2}>{product.name}</Text><View style={styles.ratingLine}><Text style={styles.ratingSmall}>★ {product.rating}</Text><Text style={styles.reviewCount}>({product.reviews})</Text></View><View style={styles.priceLine}><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.oldPriceSmall}>{money(product.oldPrice)}</Text></View><Text style={styles.discount}>{discount(product)}% off</Text><Text style={styles.delivery}>Free delivery · {product.delivery}</Text></View>
+      <View style={styles.productCopy}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.productName} numberOfLines={2}>{product.name}</Text><View style={styles.ratingLine}><Text style={styles.ratingSmall}>★ {product.rating}</Text><Text style={styles.reviewCount}>({product.reviews})</Text></View><View style={styles.priceLine}><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.oldPriceSmall}>{money(product.oldPrice)}</Text></View><Text style={styles.discount}>{discount(product)}% off</Text><Text style={styles.delivery}>{product.deliverySize === "large" || product.deliverySize === "heavy" ? "Delivery quote required" : "Standard delivery"}</Text></View>
     </Pressable>
   );
 }
@@ -468,8 +471,8 @@ function CartItem({ product, quantity, onQuantity }: { product: Product; quantit
   return <View style={styles.cartItem}><Image source={{ uri: product.image }} style={styles.cartImage} /><View style={styles.flex}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.rowTitle} numberOfLines={2}>{product.name}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><View style={styles.cartFooter}><View style={styles.quantityRow}><Text style={styles.quantity} onPress={() => onQuantity(quantity - 1)}>−</Text><Text style={styles.quantity}>{quantity}</Text><Text style={styles.quantity} onPress={() => onQuantity(quantity + 1)}>+</Text></View><Text style={styles.remove} onPress={() => onQuantity(0)}>Remove</Text></View></View></View>;
 }
 
-function OrderTotal({ subtotal }: { subtotal: number }) {
-  return <View style={styles.total}><View style={styles.between}><Text style={styles.smallMuted}>Subtotal</Text><Text style={styles.rowTitle}>{money(subtotal)}</Text></View><View style={styles.between}><Text style={styles.smallMuted}>Delivery</Text><Text style={styles.green}>Free</Text></View><View style={styles.divider} /><View style={styles.between}><Text style={styles.rowTitle}>Total</Text><Text style={styles.totalPrice}>{money(subtotal)}</Text></View></View>;
+function OrderTotal({ subtotal, deliveryFee }: { subtotal: number; deliveryFee?: number | null }) {
+  return <View style={styles.total}><View style={styles.between}><Text style={styles.smallMuted}>Subtotal</Text><Text style={styles.rowTitle}>{money(subtotal)}</Text></View><View style={styles.between}><Text style={styles.smallMuted}>Delivery</Text><Text style={styles.green}>{deliveryFee === undefined ? "Calculated at checkout" : deliveryFee === null ? "Manual quote" : money(deliveryFee)}</Text></View><View style={styles.divider} /><View style={styles.between}><Text style={styles.rowTitle}>Total</Text><Text style={styles.totalPrice}>{money(subtotal + (deliveryFee ?? 0))}</Text></View></View>;
 }
 
 function OrderCard({ title, code, products: items, active }: { title: string; code: string; products: Product[]; active?: boolean }) {

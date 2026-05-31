@@ -138,6 +138,7 @@ Vendor-owned product catalog entries.
 | `description` | `text` | | |
 | `price` | `numeric(12,2)` | Not null, check `price >= 0` | |
 | `currency` | `char(3)` | Not null | ISO 4217 code |
+| `delivery_size` | `text` | Not null, default `small` | `small`, `medium`, `large`, or `heavy` |
 | `is_active` | `boolean` | Not null, default `true` | |
 | `deleted_at` | `timestamptz` | | Soft deletion timestamp |
 | `created_at` | `timestamptz` | Not null, default `now()` | |
@@ -244,6 +245,11 @@ Customer order with pricing and delivery snapshots captured at checkout.
 | `currency` | `char(3)` | Not null | ISO 4217 code |
 | `subtotal_amount` | `numeric(12,2)` | Not null, check `>= 0` | |
 | `delivery_fee_amount` | `numeric(12,2)` | Not null, default `0`, check `>= 0` | |
+| `delivery_zone` | `text` | Not null, default `A` | `A` for 0-10 km, `B` for over 10-30 km, or `C` for over 30 km |
+| `delivery_distance_km` | `numeric(8,2)` | Not null, default `0`, check `>= 0` | Checkout distance snapshot |
+| `expected_delivery_date` | `date` | Not null | Next day before 6 PM IST, otherwise within two days |
+| `delivery_quote_required` | `boolean` | Not null, default `false` | True when Sonman must confirm the delivery fee before dispatch |
+| `delivery_fee_overridden` | `boolean` | Not null, default `false` | True after an admin sets the delivery fee |
 | `discount_amount` | `numeric(12,2)` | Not null, default `0`, check `>= 0` | |
 | `total_amount` | `numeric(12,2)` | Not null, check `>= 0` | |
 | `delivery_address` | `jsonb` | Not null | Snapshot of checkout address |
@@ -280,6 +286,7 @@ Immutable product and price snapshots for an order.
 | `unit_price` | `numeric(12,2)` | Not null, check `>= 0` | |
 | `quantity` | `integer` | Not null, check `quantity > 0` | |
 | `line_total` | `numeric(12,2)` | Not null, check `>= 0` | |
+| `delivery_size` | `text` | Not null, default `small` | Product delivery-size snapshot |
 | `created_at` | `timestamptz` | Not null, default `now()` | |
 
 Indexes:

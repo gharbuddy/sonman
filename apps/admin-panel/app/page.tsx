@@ -30,6 +30,10 @@ type Order = {
   order_number: string;
   status: string;
   total_amount: number | string;
+  delivery_fee_amount: number | string;
+  delivery_quote_required: boolean;
+  delivery_fee_overridden: boolean;
+  expected_delivery_date: string;
   created_at: string;
   customers: { users: { full_name: string } | null } | null;
   vendors: { business_name: string } | null;
@@ -62,6 +66,7 @@ export default function AdminPanel() {
   const [ordersError, setOrdersError] = useState("");
   const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartner[]>([]);
   const [deliveryAssignments, setDeliveryAssignments] = useState<DeliveryAssignment[]>([]);
+  const [deliveryFeeOverrides, setDeliveryFeeOverrides] = useState<Record<string, string>>({});
 
   const loadProducts = async () => {
     const { data, error: loadError } = await authService.supabase.from("products")
@@ -76,7 +81,7 @@ export default function AdminPanel() {
   };
   const loadOrders = async () => {
     const { data, error: loadError } = await authService.supabase.from("orders")
-      .select("id, order_number, status, total_amount, created_at, customers(users(full_name)), vendors(business_name), order_items(product_name, quantity)")
+      .select("id, order_number, status, total_amount, delivery_fee_amount, delivery_quote_required, delivery_fee_overridden, expected_delivery_date, created_at, customers(users(full_name)), vendors(business_name), order_items(product_name, quantity)")
       .order("created_at", { ascending: false });
     if (loadError) {
       setOrdersError(loadError.message);
@@ -144,6 +149,24 @@ export default function AdminPanel() {
     }
     await Promise.all([loadOrders(), loadDelivery()]);
   };
+  const overrideDeliveryFee = async (orderId: string) => {
+    const input = deliveryFeeOverrides[orderId] ?? "";
+    const fee = Number(input);
+    if (!input.trim() || !Number.isFinite(fee) || fee < 0) {
+      setOrdersError("Enter a valid delivery charge.");
+      return;
+    }
+    const { error: updateError } = await authService.supabase.rpc("admin_override_delivery_fee", {
+      target_order_id: orderId,
+      delivery_fee: fee,
+    });
+    if (updateError) {
+      setOrdersError(updateError.message);
+      return;
+    }
+    setDeliveryFeeOverrides((current) => ({ ...current, [orderId]: "" }));
+    await loadOrders();
+  };
 
   const login = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -209,13 +232,15 @@ export default function AdminPanel() {
         {ordersError && <p className="auth-error">{ordersError}</p>}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Order</th><th>Customer</th><th>Vendor</th><th>Items</th><th>Total</th><th>Status</th><th>Delivery partner</th><th>Action</th></tr></thead>
+            <thead><tr><th>Order</th><th>Customer</th><th>Vendor</th><th>Items</th><th>Delivery</th><th>Expected</th><th>Total</th><th>Status</th><th>Delivery partner</th><th>Action</th></tr></thead>
             <tbody>
               {orders.map((order) => <tr key={order.id}>
                 <td><b>{order.order_number}</b></td>
                 <td>{order.customers?.users?.full_name || "Customer"}</td>
                 <td>{order.vendors?.business_name ?? "-"}</td>
                 <td>{order.order_items.map((item) => `${item.quantity} x ${item.product_name}`).join(", ")}</td>
+                <td><div className="delivery-override"><span>{order.delivery_quote_required ? "Manual quote required" : `Rs ${Number(order.delivery_fee_amount).toLocaleString("en-IN")}${order.delivery_fee_overridden ? " (override)" : ""}`}</span><input type="number" min="0" placeholder="Override" value={deliveryFeeOverrides[order.id] ?? ""} onChange={(event) => setDeliveryFeeOverrides((current) => ({ ...current, [order.id]: event.target.value }))} /><button className="approve" onClick={() => void overrideDeliveryFee(order.id)}>Save</button></div></td>
+                <td>{order.expected_delivery_date}</td>
                 <td>Rs {Number(order.total_amount).toLocaleString("en-IN")}</td>
                 <td><span className="badge">{statusLabels[order.status] ?? order.status}</span></td>
                 <td>{deliveryAssignments.find((assignment) => assignment.order_id === order.id)
@@ -228,7 +253,7 @@ export default function AdminPanel() {
                     : "-"}</td>
                 <td>{nextStatus[order.status] ? <button className="approve" onClick={() => advanceOrder(order)}>Advance status</button> : "-"}</td>
               </tr>)}
-              {!orders.length && <tr><td colSpan={8}>No incoming orders yet.</td></tr>}
+              {!orders.length && <tr><td colSpan={10}>No incoming orders yet.</td></tr>}
             </tbody>
           </table>
         </div>
