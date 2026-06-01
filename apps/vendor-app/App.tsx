@@ -212,6 +212,7 @@ function ProductForm({ product, categories, onBack, onSaved }: { product?: Produ
   const [category, setCategory] = useState(product?.category ?? categories[0]?.name ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
   const [deliverySize, setDeliverySize] = useState<DeliverySize>(product?.deliverySize ?? "small");
+  const [variants, setVariants] = useState(product?.variants.join(", ") ?? "");
   const [image, setImage] = useState<ImagePicker.ImagePickerAsset>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -229,7 +230,7 @@ function ProductForm({ product, categories, onBack, onSaved }: { product?: Produ
     setBusy(true);
     setError("");
     try {
-      await createVendorProductsService(authService.supabase).save({ product, categoryId: selectedCategory.id, name, description, price: Number(price), stock: Math.max(0, Number(stock) || 0), deliverySize, image });
+      await createVendorProductsService(authService.supabase).save({ product, categoryId: selectedCategory.id, name, description, price: Number(price), stock: Math.max(0, Number(stock) || 0), deliverySize, variants: variants.split(",").map((value) => value.trim()).filter(Boolean), image });
       await onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Product could not be saved.");
@@ -247,6 +248,7 @@ function ProductForm({ product, categories, onBack, onSaved }: { product?: Produ
     <View style={styles.formRow}><View style={styles.flex}><Field label="Price" placeholder="Rs 0" value={price} onChange={setPrice} /></View><View style={styles.flex}><Field label="Stock quantity" placeholder="0" value={stock} onChange={setStock} /></View></View>
     <Text style={styles.fieldLabel}>Delivery size</Text>
     <View style={styles.chips}>{(["small", "medium", "large", "heavy"] as DeliverySize[]).map((size) => <Pressable key={size} style={[styles.chip, deliverySize === size && styles.chipActive]} onPress={() => setDeliverySize(size)}><Text style={[styles.chipText, deliverySize === size && styles.chipTextActive]}>{size}</Text></Pressable>)}</View>
+    <Field label="Variants (optional)" placeholder="Example: S, M, L or Red, Blue" value={variants} onChange={setVariants} />
     <Field label="Description" placeholder="Describe your product" value={description} onChange={setDescription} multiline />
     <Pressable style={[styles.aiCard, enhanced && styles.aiDone]} onPress={() => setEnhanced(true)}>
       <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>{enhanced ? "Description enhanced" : "Enhance with Sonman AI"}</Text><Text style={styles.smallMuted}>{enhanced ? "Your copy is polished and ready to review." : "Improve title, description, and search keywords."}</Text></View><Text style={styles.goldText}>{enhanced ? "Done" : "Try"}</Text>

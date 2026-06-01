@@ -15,6 +15,8 @@ export type UserProfile = {
   email: string | null;
   phone: string | null;
   full_name: string;
+  gender: string | null;
+  date_of_birth: string | null;
   is_active: boolean;
 };
 
@@ -35,6 +37,7 @@ type RegisterInput = {
   password: string;
   fullName: string;
   role: RegisterableRole;
+  emailRedirectTo?: string;
 };
 
 export class AuthAccessError extends Error {}
@@ -61,7 +64,7 @@ export function createAuthService(options: AuthServiceOptions) {
     requireConfiguration();
     const { data, error } = await supabase
       .from("users")
-      .select("id, role, email, phone, full_name, is_active")
+      .select("id, role, email, phone, full_name, gender, date_of_birth, is_active")
       .eq("id", userId)
       .single();
     if (error || !data) throw new AuthAccessError("Your Sonman profile is unavailable.");
@@ -152,7 +155,7 @@ export function createAuthService(options: AuthServiceOptions) {
       const { data, error } = await supabase.auth.signUp({
         email: input.email,
         password: input.password,
-        options: { data: { full_name: input.fullName, role: input.role } },
+        options: { data: { full_name: input.fullName, role: input.role }, emailRedirectTo: input.emailRedirectTo },
       });
       if (error) throw error;
       return data;
@@ -161,9 +164,9 @@ export function createAuthService(options: AuthServiceOptions) {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     },
-    async updateProfile(fullName: string) {
+    async updateProfile(input: { fullName: string; phone: string; gender: string; dateOfBirth: string }) {
       requireConfiguration();
-      const normalizedName = fullName.trim();
+      const normalizedName = input.fullName.trim();
       const { error: metadataError } = await supabase.auth.updateUser({ data: { full_name: normalizedName } });
       if (metadataError) throw metadataError;
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -171,9 +174,14 @@ export function createAuthService(options: AuthServiceOptions) {
       if (!user) throw new AuthAccessError("Sign in to update your profile.");
       const { data, error } = await supabase
         .from("users")
-        .update({ full_name: normalizedName })
+        .update({
+          full_name: normalizedName,
+          phone: input.phone.trim() || null,
+          gender: input.gender.trim() || null,
+          date_of_birth: input.dateOfBirth.trim() || null,
+        })
         .eq("id", user.id)
-        .select("id, role, email, phone, full_name, is_active")
+        .select("id, role, email, phone, full_name, gender, date_of_birth, is_active")
         .single();
       if (error) throw error;
       return data as UserProfile;

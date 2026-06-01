@@ -58,9 +58,13 @@ export function usePushNotifications(supabase: SupabaseClient, authenticated: bo
       const permission = current.granted ? current : await Notifications.requestPermissionsAsync();
       if (!permission.granted || !active) return;
       await registerToken(supabase, app, await Notifications.getDevicePushTokenAsync());
-      subscription = Notifications.addPushTokenListener((token) => void registerToken(supabase, app, token));
+      subscription = Notifications.addPushTokenListener((token) => {
+        void registerToken(supabase, app, token).catch(() => undefined);
+      });
     };
-    void configure().catch((error) => console.warn("Push notification registration failed", error));
+    // Push registration is optional at startup: devices without a native push
+    // provider should still be able to use the app and notification history.
+    void configure().catch(() => undefined);
     return () => {
       active = false;
       subscription?.remove();

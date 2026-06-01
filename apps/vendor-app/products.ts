@@ -14,6 +14,7 @@ export type VendorProduct = {
   sku: string;
   description: string;
   deliverySize: DeliverySize;
+  variants: string[];
 };
 
 type ProductRow = {
@@ -26,6 +27,7 @@ type ProductRow = {
   is_active: boolean;
   approval_status: "draft" | "pending_review" | "approved" | "rejected";
   delivery_size: DeliverySize;
+  variants: string[];
   categories: { name: string } | null;
   inventory: { quantity_available: number } | { quantity_available: number }[] | null;
   product_images: { storage_path: string; is_primary: boolean; sort_order: number }[] | null;
@@ -57,6 +59,7 @@ const mapProduct = (supabase: SupabaseClient, row: ProductRow): VendorProduct =>
     sku: row.slug,
     description: row.description ?? "",
     deliverySize: row.delivery_size,
+    variants: row.variants ?? [],
   };
 };
 
@@ -79,6 +82,7 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
       is_active,
       approval_status,
       delivery_size,
+      variants,
       categories(name),
       inventory!inventory_product_id_fkey(quantity_available),
       product_images(storage_path, is_primary, sort_order)
@@ -91,10 +95,10 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
     mapProduct(supabase, row),
   );
 },
-  async save(input: { product?: VendorProduct; categoryId: string; name: string; description: string; price: number; stock: number; deliverySize: DeliverySize; image?: { uri: string; mimeType?: string | null; fileName?: string | null } }) {
+  async save(input: { product?: VendorProduct; categoryId: string; name: string; description: string; price: number; stock: number; deliverySize: DeliverySize; variants: string[]; image?: { uri: string; mimeType?: string | null; fileName?: string | null } }) {
     const { data: vendor, error: vendorError } = await supabase.from("vendors").select("id").single();
     if (vendorError || !vendor) throw vendorError ?? new Error("Vendor profile is unavailable.");
-    const values = { vendor_id: vendor.id, category_id: input.categoryId, name: input.name.trim(), slug: slugify(input.name), description: input.description.trim(), price: input.price, currency: "INR", delivery_size: input.deliverySize };
+    const values = { vendor_id: vendor.id, category_id: input.categoryId, name: input.name.trim(), slug: slugify(input.name), description: input.description.trim(), price: input.price, currency: "INR", delivery_size: input.deliverySize, variants: input.variants };
     const query = input.product ? supabase.from("products").update(values).eq("id", input.product.id) : supabase.from("products").insert(values);
     const { data: product, error } = await query.select("id").single();
     if (error) throw error;

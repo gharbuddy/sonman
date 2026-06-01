@@ -1,0 +1,30 @@
+{
+  "name": "@sonman/customer-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sonman customer mobile application",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@sonman/auth-service": "workspace:*",
+    "@sonman/notifications-service": "workspace:*",
+    "expo": "^54.0.35",
+    "expo-linking": "~8.0.11",
+    "expo-status-bar": "~3.0.9",
+    "expo-web-browser": "~15.0.10",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.17",
+    "typescript": "~5.9.3"
+  }
+}

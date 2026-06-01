@@ -47,39 +47,33 @@ type Screen =
   | "notification-settings";
 
 const palette = {
-  cream: "#F5F7FB",
+  cream: "#F8F6F1",
   white: "#FFFFFF",
-  sand: "#EEF2F7",
-  line: "#E2E8F0",
-  black: "#0F172A",
-  muted: "#64748B",
-  gold: "#F59E0B",
-  goldPale: "#FEF3C7",
-  green: "#0F766E",
-  greenPale: "#DCFCE7",
-  red: "#EF4444",
-  blue: "#2563EB",
-  bluePale: "#DBEAFE",
+  sand: "#F0ECE4",
+  line: "#E7E1D8",
+  black: "#171717",
+  muted: "#76716A",
+  gold: "#A97B2C",
+  goldPale: "#F6E8C6",
+  green: "#267250",
+  greenPale: "#E5F3EB",
+  red: "#D85743",
 };
 
 const categories: ReadonlyArray<readonly [string, string, string, string]> = [
-  ["Electronics", "📱", "Mobiles, gadgets and accessories", "#DBEAFE"],
-  ["Fashion", "👕", "Clothing and daily style", "#FCE7F3"],
-  ["Dry Fruits", "🥜", "Kashmir pantry favourites", "#DCFCE7"],
-  ["Home", "🏠", "Home and kitchen essentials", "#FEF3C7"],
-  ["Beauty", "✨", "Beauty and personal care", "#F3E8FF"],
-  ["Handicrafts", "🧺", "Local artisan products", "#FFE4E6"],
-  ["Books", "📚", "Books and stationery", "#E0F2FE"],
-  ["More", "▦", "Explore every category", "#F1F5F9"],
+  ["Handicrafts", "HC", "Crafted by local artisans", "#F6E8C6"],
+  ["Dry Fruits", "DF", "Kashmir pantry favourites", "#E5F3EB"],
+  ["Fashion", "FS", "Local style and essentials", "#F1E7DF"],
+  ["Home", "HM", "Thoughtful home finds", "#E8EAF3"],
+  ["More", "+", "Explore every category", "#F0ECE4"],
 ];
 const offers: ReadonlyArray<readonly [string, string, string, string]> = [
-  ["SONMAN LOCAL", "Fresh picks from Kulgam sellers", "Shop now", "#DBEAFE"],
-  ["DEALS NEAR YOU", "Daily essentials at better prices", "Explore", "#FEF3C7"],
+  ["VOCAL FOR LOCAL", "Shop Kashmir's local favourites", "Explore now", "#F6E8C6"],
 ];
 const vendors: ReadonlyArray<readonly [string, string, string, string]> = [];
 const SERVICE_STATES = ["Jammu and Kashmir"];
 const SERVICE_DISTRICTS = ["Kulgam"];
-const premiumFont = Platform.select({ ios: "System", android: "sans-serif", default: "system-ui" });
+const premiumFont = Platform.select({ ios: "Avenir Next", android: "sans-serif-medium", default: "system-ui" });
 
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const discount = ({ price, oldPrice }: Product) =>
@@ -236,7 +230,6 @@ export default function App() {
       return next;
     });
     try {
-      if (!authenticated) return;
       await ordersService.setCartItem(id, quantity);
     } catch (cause) {
       setCart(previous);
@@ -248,10 +241,6 @@ export default function App() {
     setPlacingOrder(true);
     setOrderError("");
     try {
-      if (!authenticated) {
-        setScreen("login");
-        throw new Error("Sign in to place your order.");
-      }
       if (!defaultAddress) throw new Error("Add a default delivery address before placing your order.");
       await ordersService.placeOrder({
         id: defaultAddress.id,
@@ -274,7 +263,7 @@ export default function App() {
   const deliveryQuote = quoteDelivery(cartProducts, CHECKOUT_DISTANCE_KM);
 
   if (!launchReady) return <SafeLayout><Splash opacity={splashOpacity} /></SafeLayout>;
-  if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("home")} /></SafeLayout>;
+  if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("login")} /></SafeLayout>;
   if (screen === "login" || screen === "signup") {
     return (
       <SafeLayout>
@@ -289,6 +278,8 @@ export default function App() {
       </SafeLayout>
     );
   }
+  if (!authenticated) return <SafeLayout><Auth mode="login" onAuthenticated={() => { setAuthenticated(true); setScreen("home"); }} onSwitch={() => setScreen("signup")} /></SafeLayout>;
+
   return (
     <SafeLayout>
       {screen === "home" && <Home profile={profile} address={defaultAddress} products={products} productsError={productsError} onProfile={() => setScreen("profile")} onAddresses={() => setScreen("addresses")} onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
@@ -309,7 +300,7 @@ export default function App() {
       {screen === "cart" && <Cart items={cartProducts} quantities={cart} subtotal={subtotal} error={orderError} onQuantity={setCartQuantity} onCheckout={() => setScreen("checkout")} />}
       {screen === "checkout" && <Checkout address={defaultAddress} subtotal={subtotal} quote={deliveryQuote} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onAddresses={() => setScreen("addresses")} onPlaceOrder={placeOrder} />}
       {screen === "orders" && <Orders orders={orders} error={orderError} />}
-      {screen === "profile" && (authenticated ? <Profile profile={profile} onEdit={() => setScreen("edit-profile")} onAddresses={() => setScreen("addresses")} onHelp={() => setScreen("help")} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} /> : <Auth mode="login" onAuthenticated={() => { setAuthenticated(true); setScreen("home"); }} onSwitch={() => setScreen("signup")} />)}
+      {screen === "profile" && <Profile profile={profile} onEdit={() => setScreen("edit-profile")} onAddresses={() => setScreen("addresses")} onHelp={() => setScreen("help")} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} />}
       {screen === "edit-profile" && profile && <EditProfile profile={profile} onBack={() => setScreen("profile")} onSaved={(next) => { setProfile(next); setScreen("profile"); }} />}
       {screen === "addresses" && <Addresses addresses={addresses} onBack={() => setScreen("profile")} onAdd={() => { setEditingAddress(undefined); setScreen("address-form"); }} onEdit={(address) => { setEditingAddress(address); setScreen("address-form"); }} onDelete={async (id) => { await profileService.deleteAddress(id); await loadProfile(); }} onDefault={async (id) => { await profileService.setDefaultAddress(id); await loadProfile(); }} />}
       {screen === "address-form" && <AddressForm address={editingAddress} onBack={() => setScreen("addresses")} onSaved={async () => { await loadProfile(); setScreen("addresses"); }} />}
@@ -322,22 +313,23 @@ export default function App() {
 }
 
 function Splash({ opacity }: { opacity: Animated.Value }) {
-  const letters = ["s", "so", "son", "sonm", "sonma", "sonman"];
-  const [word, setWord] = useState("s");
-  useEffect(() => {
-    const timers = letters.map((item, index) => setTimeout(() => setWord(item), 170 * index));
-    return () => timers.forEach(clearTimeout);
-  }, []);
   return (
-    <Animated.View style={[styles.splashFade, { opacity }]}> 
-      <View style={styles.splashClean}>
-        <View style={styles.splashGlowOne} />
-        <View style={styles.splashGlowTwo} />
-        <View style={styles.splashLogoBox}><Text style={styles.splashLogoS}>S</Text></View>
-        <Text style={styles.splashWord}>{word}</Text>
-        <Text style={styles.splashLine}>Kashmir's local marketplace</Text>
-        <Text style={styles.splashSubLine}>Shop local. Deliver smarter.</Text>
-      </View>
+    <Animated.View style={[styles.splashFade, { opacity }]}>
+      <ScreenShell contentContainerStyle={styles.splash}>
+        <View style={styles.splashSky}>
+          <View style={styles.splashSun} />
+          <View style={[styles.mountain, styles.mountainFar]} />
+          <View style={[styles.mountain, styles.mountainBack]} />
+          <View style={[styles.mountain, styles.mountainFront]} />
+          <View style={styles.splashLake} />
+        </View>
+        <Text style={styles.splashEyebrow}>KASHMIR MARKETPLACE</Text>
+        <View style={styles.brandMark}><Text style={styles.brandMarkText}>S</Text></View>
+        <Text style={styles.splashLogo}>sonman</Text>
+        <Text style={styles.splashSlogan}>Vocal for Local</Text>
+        <Text style={styles.splashTag}>Support Kashmir Businesses</Text>
+        <View style={styles.splashMarketCard}><Text style={styles.splashMarketIcon}>LOCAL</Text><Text style={styles.splashMarketText}>Crafted in Kashmir. Chosen with care.</Text></View>
+      </ScreenShell>
     </Animated.View>
   );
 }
@@ -428,51 +420,33 @@ function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; o
 
 function Home({ profile, address, products, productsError, onProfile, onAddresses, onCategories, onListing, onProduct }: { profile?: UserProfile; address?: CustomerAddress; products: Product[]; productsError: string; onProfile: () => void; onAddresses: () => void; onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
   const { width } = useWindowDimensions();
-  const contentWidth = width - 24;
+  const contentWidth = width - (width < 360 ? 24 : 28);
   const cardWidth = Math.floor((contentWidth - 10) / 2);
+
   return (
-    <ScreenShell contentContainerStyle={styles.homeScreen}>
-      <View style={styles.appTopBar}>
-        <Pressable style={styles.locationMini} onPress={onAddresses}>
-          <Text style={styles.pinIcon}>⌖</Text>
-          <View>
-            <Text style={styles.deliverSmall}>{address ? `Deliver to ${address.postalCode}` : "Add delivery location"}</Text>
-            <Text style={styles.deliverText} numberOfLines={1}>{address ? addressText(address) : "Kulgam, Jammu and Kashmir"}</Text>
-          </View>
-        </Pressable>
-        <Pressable style={styles.profileIconBtn} onPress={onProfile}><Text style={styles.profileIconText}>{initials(profile?.full_name ?? "") || "You"}</Text></Pressable>
+    <ScreenShell contentContainerStyle={width < 360 ? styles.screenCompact : undefined}>
+      <View style={styles.searchDock}>
+        <View style={styles.marketHeader}><Text style={styles.logo}>sonman</Text><Pressable style={styles.avatarSmall} onPress={onProfile}><Text style={styles.avatarSmallText}>{initials(profile?.full_name ?? "")}</Text></Pressable></View>
+        <SearchBar />
       </View>
-      <SearchBar />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickCategoryRail}>
-        {categories.map(([name, icon, , color]) => (
-          <Pressable key={name} style={styles.quickCategory} onPress={() => name === "More" ? onCategories() : onListing(name)}>
-            <View style={[styles.quickCategoryIcon, { backgroundColor: color }]}><Text style={styles.quickCategoryEmoji}>{icon}</Text></View>
-            <Text style={styles.quickCategoryText} numberOfLines={2}>{name}</Text>
-          </Pressable>
-        ))}
+      <Pressable style={styles.location} onPress={onAddresses}><Text style={styles.locationIcon}>PIN</Text><View style={styles.flex}><Text style={styles.locationLabel}>{address ? `Deliver to ${address.recipientName}` : "Add a delivery address"}</Text><Text style={styles.locationText}>{address ? addressText(address) : "Choose where your Sonman order should arrive."}</Text></View><Text style={styles.chevron}>v</Text></Pressable>
+      <Pressable style={styles.aiPill}>
+        <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI</Text></View>
+        <View style={styles.flex}><Text style={styles.aiTitle}>Ask Sonman AI</Text><Text style={styles.tinyMuted}>Tell us what you need. We will narrow it down.</Text></View>
+        <Text style={styles.chevron}>+</Text>
+      </Pressable>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRail}>
+        {categories.map(([name, icon, , color]) => <Pressable key={name} style={styles.categoryBubble} onPress={() => name === "More" ? onCategories() : onListing(name)}><View style={[styles.categoryCircle, { backgroundColor: color }]}><Text style={styles.categoryCircleText}>{icon}</Text></View><Text style={styles.categoryBubbleText}>{name}</Text></Pressable>)}
       </ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} pagingEnabled contentContainerStyle={styles.bannerRail}>
-        {offers.map(([kicker, title, action, color], index) => (
-          <Pressable key={title} style={[styles.bigBanner, { width: contentWidth, backgroundColor: color }]} onPress={() => onListing()}>
-            <View style={styles.bannerContent}>
-              <Text style={styles.bannerKicker}>{kicker}</Text>
-              <Text style={styles.bannerTitle}>{title}</Text>
-              <Text style={styles.bannerAction}>{action} ›</Text>
-            </View>
-            {!!products[index]?.image && <Image source={{ uri: products[index].image }} style={styles.bannerProductImage} />}
-          </Pressable>
-        ))}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={contentWidth + 10} decelerationRate="fast" contentContainerStyle={styles.offerRail}>
+        {offers.map(([kicker, title, action, color], index) => <Pressable key={kicker} style={[styles.offer, { width: contentWidth, backgroundColor: color }]} onPress={() => onListing()}><View style={styles.flex}><Text style={styles.offerKicker}>{kicker}</Text><Text style={styles.offerTitle}>{title}</Text><Text style={styles.offerAction}>{action}  &gt;</Text></View>{products[index + 1]?.image && <Image source={{ uri: products[index + 1].image }} style={styles.offerImage} />}</Pressable>)}
       </ScrollView>
-      <View style={styles.serviceStrip}>
-        <Text style={styles.serviceItem}>🚚 Free delivery offers</Text>
-        <Text style={styles.serviceItem}>🔁 Easy replacement</Text>
-        <Text style={styles.serviceItem}>🔒 Secure prepaid</Text>
-      </View>
-      <SectionHeader title="Trending near you" action="See all" onPress={() => onListing("Trending")} />
-      <View style={styles.productGrid}>{products.slice(0, 6).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</View>
-      {!products.length && <Empty title={productsError ? "Products unavailable" : "No products yet"} subtitle={productsError || "Approved products will appear here."} />}
-      <SectionHeader title="More to explore" action="View all" onPress={() => onListing("Recommended")} />
-      <View style={styles.productGrid}>{[...products].reverse().slice(0, 6).map((product) => <ProductCard key={`more-${product.id}`} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</View>
+      <MarketplaceSection title="Trending now" action="See all" onPress={() => onListing("Trending")}><View style={styles.productGrid}>{products.slice(0, 4).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</View></MarketplaceSection>
+      {!products.length && <Empty title={productsError ? "Products unavailable" : "No products yet"} subtitle={productsError || "Active products will appear here when vendors publish them."} />}
+      <MarketplaceSection title="Recommended for you" action="See all" onPress={() => onListing("Recommended")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.productRail}>{[...products].reverse().slice(0, 4).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} onPress={() => onProduct(product)} />)}</ScrollView></MarketplaceSection>
+      <MarketplaceSection title="Continue shopping" action="View history" onPress={() => onListing("Continue shopping")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{products.slice(1, 5).map((product) => <CompactProduct key={product.id} product={product} onPress={() => onProduct(product)} />)}</ScrollView></MarketplaceSection>
+      <MarketplaceSection title="Popular vendors" action="See all" onPress={() => onListing("Vendors")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.vendorRail}>{vendors.map(([name, icon, rating, color]) => <VendorCard key={name} name={name} icon={icon} rating={rating} color={color} />)}</ScrollView></MarketplaceSection>
+      <MarketplaceSection title="Recently viewed" action="See all" onPress={() => onListing("Recently viewed")}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{products.slice(2, 6).map((product) => <CompactProduct key={product.id} product={product} onPress={() => onProduct(product)} />)}</ScrollView></MarketplaceSection>
     </ScreenShell>
   );
 }
@@ -774,18 +748,18 @@ function ScreenShell({ children, contentContainerStyle }: { children: ReactNode;
 }
 
 function BottomNav({ screen, count, onNavigate }: { screen: Screen; count: number; onNavigate: (screen: Screen) => void }) {
-  const nav = [["⌂", "Home", "home"], ["▦", "Categories", "categories"], ["🛒", "Cart", "cart"], ["▤", "Orders", "orders"], ["☻", "Account", "profile"]] as const;
-  return <View style={styles.bottomNav}>{nav.map(([icon, label, target]) => <Pressable key={target} hitSlop={10} style={styles.navItem} onPress={() => onNavigate(target)}><View><Text style={[styles.navIcon, screen === target && styles.navActive]}>{icon}</Text>{target === "cart" && count > 0 && <Text style={styles.cartCount}>{count}</Text>}</View><Text style={[styles.navLabel, screen === target && styles.navActive]}>{label}</Text></Pressable>)}</View>;
+  const nav = [["HM", "Home", "home"], ["SH", "Shop", "categories"], ["BG", "Cart", "cart"], ["BX", "Orders", "orders"], ["ME", "Profile", "profile"]] as const;
+  return <View style={styles.bottomNav}>{nav.map(([icon, label, target]) => <Pressable key={target} hitSlop={10} style={styles.navItem} onPress={() => onNavigate(target)}><View><Text style={[styles.navIcon, screen === target && styles.navActive]}>{icon}</Text>{target === "cart" && count > 0 && <Text style={styles.cartCount}>{count}</Text>}</View><Text style={[styles.navLabel, screen === target && styles.navActive]}>{label}</Text>{screen === target && <View style={styles.navIndicator} />}</Pressable>)}</View>;
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, paddingTop: Platform.OS === "android" ? SAFE_TOP : 0, backgroundColor: palette.cream }, screenShell: { flex: 1, backgroundColor: palette.cream },
   flex: { flex: 1 }, flexEnd: { marginLeft: "auto" }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, alignRight: { textAlign: "right" },
-  splashFade: { flex: 1 }, splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F1E5" }, splashSky: { position: "absolute", left: 0, right: 0, bottom: 0, height: "48%", overflow: "hidden", backgroundColor: "#E4EEE6" }, splashSun: { position: "absolute", right: 42, top: 30, width: 62, height: 62, borderRadius: 31, backgroundColor: "#E9C984" }, splashLake: { position: "absolute", left: 0, right: 0, bottom: 0, height: 66, backgroundColor: "#B7D3CC" }, mountain: { position: "absolute", width: 300, height: 300, borderRadius: 42, transform: [{ rotate: "45deg" }] }, mountainFar: { left: 92, bottom: -118, backgroundColor: "#CBD9CD" }, mountainBack: { left: -65, bottom: -112, backgroundColor: "#9DBBAA" }, mountainFront: { right: -70, bottom: -145, backgroundColor: "#386F59" }, splashEyebrow: { color: palette.gold, fontSize: 11, fontWeight: "700", letterSpacing: 2, marginBottom: 18 }, brandMark: { width: 76, height: 76, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16, elevation: 4, shadowColor: palette.black, shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, brandMarkText: { color: palette.goldPale, fontFamily: premiumFont, fontSize: 40, fontWeight: "700" }, logo: { color: palette.black, fontFamily: premiumFont, fontSize: 28, fontWeight: "800", letterSpacing: -1 }, splashLogo: { color: palette.black, fontFamily: premiumFont, fontSize: 40, fontWeight: "700", letterSpacing: 1 }, splashSlogan: { color: palette.green, fontSize: 17, fontWeight: "700", marginTop: 11 }, splashTag: { color: palette.muted, fontSize: 13, marginTop: 5 }, splashMarketCard: { position: "absolute", left: 24, right: 24, bottom: 34, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.90)" }, splashMarketIcon: { color: palette.gold, fontSize: 10, fontWeight: "700", letterSpacing: 1 }, splashMarketText: { color: palette.black, fontSize: 12, fontWeight: "600" },
+  splashFade: { flex: 1 }, splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F1E5" }, splashSky: { position: "absolute", left: 0, right: 0, bottom: 0, height: "48%", overflow: "hidden", backgroundColor: "#E4EEE6" }, splashSun: { position: "absolute", right: 42, top: 30, width: 62, height: 62, borderRadius: 31, backgroundColor: "#E9C984" }, splashLake: { position: "absolute", left: 0, right: 0, bottom: 0, height: 66, backgroundColor: "#B7D3CC" }, mountain: { position: "absolute", width: 300, height: 300, borderRadius: 42, transform: [{ rotate: "45deg" }] }, mountainFar: { left: 92, bottom: -118, backgroundColor: "#CBD9CD" }, mountainBack: { left: -65, bottom: -112, backgroundColor: "#9DBBAA" }, mountainFront: { right: -70, bottom: -145, backgroundColor: "#386F59" }, splashEyebrow: { color: palette.gold, fontSize: 11, fontWeight: "700", letterSpacing: 2, marginBottom: 18 }, brandMark: { width: 76, height: 76, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16, elevation: 4, shadowColor: palette.black, shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, brandMarkText: { color: palette.goldPale, fontFamily: premiumFont, fontSize: 40, fontWeight: "700" }, logo: { color: palette.black, fontFamily: premiumFont, fontSize: 24, fontWeight: "700" }, splashLogo: { color: palette.black, fontFamily: premiumFont, fontSize: 40, fontWeight: "700", letterSpacing: 1 }, splashSlogan: { color: palette.green, fontSize: 17, fontWeight: "700", marginTop: 11 }, splashTag: { color: palette.muted, fontSize: 13, marginTop: 5 }, splashMarketCard: { position: "absolute", left: 24, right: 24, bottom: 34, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.90)" }, splashMarketIcon: { color: palette.gold, fontSize: 10, fontWeight: "700", letterSpacing: 1 }, splashMarketText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   onboarding: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22 }, onboardingVisual: { height: "43%", overflow: "hidden", borderRadius: 30, backgroundColor: palette.sand }, fillImage: { width: "100%", height: "100%" }, floatingNote: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 8, alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.94)" }, noteText: { color: palette.black, fontSize: 12, fontWeight: "600" }, onboardingTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, dots: { color: palette.gold, textAlign: "center", marginVertical: 12, letterSpacing: 4 },
   auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, authDivider: { color: palette.muted, textAlign: "center", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white, marginBottom: 12 }, select: { height: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginBottom: 12 }, selectText: { color: palette.black, fontSize: 14 }, selectPlaceholder: { color: palette.muted, fontSize: 14 }, selectMenu: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: -7, marginBottom: 12 }, selectOption: { paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
-  screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 98, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, formIntro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginBottom: 16 }, helpCard: { gap: 5, padding: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginBottom: 10 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 22, lineHeight: 28, fontWeight: "700", marginBottom: 8 }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
-  searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 50, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 14, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, mic: { color: palette.gold, fontSize: 12, fontWeight: "600" },
+  screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, paddingBottom: BOTTOM_NAV_HEIGHT + BOTTOM_SAFE_SPACE + 24, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, formIntro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginBottom: 16 }, helpCard: { gap: 5, padding: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginBottom: 10 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 24, lineHeight: 30, fontWeight: "700" }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
+  searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, mic: { color: palette.gold, fontSize: 12, fontWeight: "600" },
   searchDock: { marginHorizontal: -14, paddingHorizontal: 14, backgroundColor: palette.cream }, location: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, marginBottom: 8 }, locationIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, locationLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, locationText: { color: palette.muted, fontSize: 12, marginTop: 1 }, chevron: { color: palette.muted, fontSize: 15, fontWeight: "600" }, aiPill: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 15, backgroundColor: palette.goldPale, marginBottom: 11 }, aiBadge: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.white }, aiBadgeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, aiTitle: { color: palette.black, fontSize: 14, fontWeight: "600" }, arrow: { color: palette.muted, fontSize: 29, lineHeight: 30 }, horizontal: { marginBottom: 13 }, chip: { height: 39, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, marginRight: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white }, chipIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, chipText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   categoryRail: { gap: 7, paddingBottom: 12 }, categoryBubble: { width: 59, alignItems: "center", gap: 5 }, categoryCircle: { width: 50, height: 50, alignItems: "center", justifyContent: "center", borderRadius: 25 }, categoryCircleText: { color: palette.black, fontSize: 12, fontWeight: "700" }, categoryBubbleText: { color: palette.black, fontSize: 12, fontWeight: "600" }, offerRail: { gap: 10 }, offer: { height: 142, flexDirection: "row", overflow: "hidden", borderRadius: 17, padding: 15 }, offerKicker: { color: palette.gold, fontSize: 12, fontWeight: "600" }, offerTitle: { color: palette.black, fontSize: 20, lineHeight: 24, fontWeight: "700", marginTop: 7 }, offerAction: { color: palette.black, fontSize: 12, fontWeight: "600", marginTop: 10 }, offerImage: { width: 112, height: 142, marginVertical: -15, marginRight: -15 },
   hero: { height: 215, overflow: "hidden", borderRadius: 25, backgroundColor: palette.black }, heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.46)" }, heroCopy: { position: "absolute", left: 18, top: 18 }, heroKicker: { color: palette.goldPale, fontSize: 12, fontWeight: "600" }, heroTitle: { color: palette.white, fontSize: 24, lineHeight: 30, fontWeight: "700", marginTop: 8 }, heroBody: { color: palette.white, fontSize: 14, marginTop: 7 }, heroButton: { alignSelf: "flex-start", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 14, backgroundColor: palette.white, marginTop: 15 }, heroButtonText: { color: palette.black, fontSize: 12, fontWeight: "600" },
@@ -798,37 +772,5 @@ const styles = StyleSheet.create({
   primaryButton: { minHeight: 55, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderRadius: 17, backgroundColor: palette.black, marginVertical: 6 }, primaryButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, disabled: { opacity: 0.35 }, checkoutCard: { padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, checkoutHeader: { flexDirection: "row", alignItems: "center", gap: 9 }, checkoutIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.sand }, checkoutIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, checkoutBody: { gap: 3, paddingLeft: 43, paddingTop: 8 }, policyRow: { flexDirection: "row", gap: 10, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginVertical: 8 }, checkbox: { width: 20, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.gold, borderRadius: 5 }, checkboxChecked: { backgroundColor: palette.gold }, checkboxMark: { color: palette.white, fontSize: 14, fontWeight: "700" }, policyText: { flex: 1, color: palette.muted, fontSize: 12, lineHeight: 18 }, policyLabel: { color: palette.gold, fontSize: 12, fontWeight: "700", marginTop: 10 },
   tabs: { flexDirection: "row", gap: 22, marginTop: 19, borderBottomWidth: 1, borderBottomColor: palette.line }, tab: { color: palette.muted, fontSize: 14, fontWeight: "600", paddingBottom: 10 }, tabActive: { color: palette.black, fontSize: 14, fontWeight: "700", paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: palette.gold }, orderCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13 }, orderTitle: { marginTop: 9 }, statusActive: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.goldPale }, statusDelivered: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.green, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.greenPale }, orderImages: { flexDirection: "row", gap: 7, marginTop: 10 }, orderImage: { width: 52, height: 56, borderRadius: 10 }, progress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.line, marginTop: 14 }, progressDone: { width: "68%", height: 5, borderRadius: 3, backgroundColor: palette.gold }, track: { minHeight: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, marginTop: 13 }, trackText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 16, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white, marginTop: 15 }, profileDetailsCard: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 12 }, profileDetail: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, profileDetailLast: { borderBottomWidth: 0 }, profileDetailLabel: { color: palette.muted, fontSize: 12, fontWeight: "600" }, profileDetailValue: { flexShrink: 1, color: palette.black, textAlign: "right", fontSize: 14, fontWeight: "600" }, profileMenuCard: { overflow: "hidden", paddingHorizontal: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, editProfileCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, dobRow: { flexDirection: "row", gap: 9, marginBottom: 12 }, dobField: { flex: 1, height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.cream }, dobYear: { flex: 1.45 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontFamily: premiumFont, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1, marginTop: 22, marginBottom: 8 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: palette.line }, profileRowLast: { borderBottomWidth: 0 }, profileIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.goldPale }, profileIconText: { color: palette.gold, fontSize: 11, fontWeight: "700" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 }, addressCard: { gap: 4, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 10 }, addressActions: { flexDirection: "row", gap: 18, marginTop: 8 },
-  empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 0, right: 0, bottom: 0, height: 76, zIndex: 100, flexDirection: "row", alignItems: "center", paddingTop: 6, paddingBottom: Platform.OS === "android" ? 8 : 12, borderTopWidth: 1, borderColor: palette.line, backgroundColor: palette.white, elevation: 8 }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 22, lineHeight: 24, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 11, fontWeight: "500" }, navActive: { color: palette.blue }, navIndicator: { display: "none" }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
-
-  splashClean: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0B1220", overflow: "hidden" },
-  splashGlowOne: { position: "absolute", width: 330, height: 330, borderRadius: 165, backgroundColor: "rgba(245,158,11,0.16)", top: -80, right: -100 },
-  splashGlowTwo: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: "rgba(15,118,110,0.22)", bottom: -70, left: -80 },
-  splashLogoBox: { width: 96, height: 96, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#020617", borderWidth: 1, borderColor: "rgba(245,158,11,0.55)", shadowColor: palette.gold, shadowOpacity: 0.35, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 8 },
-  splashLogoS: { color: "#FEF3C7", fontSize: 56, fontWeight: "900", letterSpacing: -3 },
-  splashWord: { color: palette.white, fontSize: 56, fontWeight: "900", letterSpacing: -3, marginTop: 22, textTransform: "lowercase" },
-  splashLine: { color: palette.gold, fontSize: 15, fontWeight: "700", marginTop: 10 },
-  splashSubLine: { color: "#CBD5E1", fontSize: 13, marginTop: 6 },
-  homeScreen: { paddingHorizontal: 12, paddingTop: 10 },
-  appTopBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  locationMini: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
-  pinIcon: { color: palette.black, fontSize: 20 },
-  deliverSmall: { color: palette.black, fontSize: 14, fontWeight: "700" },
-  deliverText: { color: palette.muted, fontSize: 12, maxWidth: 250 },
-  profileIconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: palette.black },
-  profileIconText: { color: palette.white, fontSize: 12, fontWeight: "800" },
-  quickCategoryRail: { gap: 12, paddingVertical: 10 },
-  quickCategory: { width: 70, alignItems: "center" },
-  quickCategoryIcon: { width: 58, height: 58, borderRadius: 18, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line },
-  quickCategoryEmoji: { fontSize: 24 },
-  quickCategoryText: { color: palette.black, fontSize: 12, textAlign: "center", marginTop: 6, fontWeight: "600" },
-  bannerRail: { gap: 10, paddingVertical: 8 },
-  bigBanner: { height: 150, borderRadius: 20, overflow: "hidden", flexDirection: "row", padding: 18, borderWidth: 1, borderColor: palette.line },
-  bannerContent: { flex: 1, justifyContent: "center" },
-  bannerKicker: { color: palette.gold, fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
-  bannerTitle: { color: palette.black, fontSize: 24, lineHeight: 29, fontWeight: "900", marginTop: 8, maxWidth: 230 },
-  bannerAction: { color: palette.green, fontSize: 15, fontWeight: "800", marginTop: 12 },
-  bannerProductImage: { width: 105, height: 120, borderRadius: 16, alignSelf: "center" },
-  serviceStrip: { flexDirection: "row", gap: 8, paddingVertical: 8, marginBottom: 4 },
-  serviceItem: { flex: 1, color: palette.black, fontSize: 11, fontWeight: "700", backgroundColor: palette.white, borderWidth: 1, borderColor: palette.line, borderRadius: 12, padding: 8, textAlign: "center" },
-
+  empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 10, right: 10, bottom: BOTTOM_SAFE_SPACE, height: BOTTOM_NAV_HEIGHT, zIndex: 100, flexDirection: "row", alignItems: "center", paddingTop: 8, paddingBottom: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 22, backgroundColor: palette.white, elevation: 5, shadowColor: palette.black, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 12, lineHeight: 14, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 12, fontWeight: "600" }, navActive: { color: palette.black }, navIndicator: { width: 4, height: 4, borderRadius: 2, backgroundColor: palette.gold }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
 });
