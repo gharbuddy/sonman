@@ -9,7 +9,7 @@ export type VendorProduct = {
   category: string;
   price: number;
   stock: number;
-  status: "Active" | "Low stock" | "Draft";
+  status: "Active" | "Low stock" | "Draft" | "Pending Review" | "Rejected";
   image: string;
   sku: string;
   description: string;
@@ -24,6 +24,7 @@ type ProductRow = {
   description: string | null;
   price: number | string;
   is_active: boolean;
+  approval_status: "draft" | "pending_review" | "approved" | "rejected";
   delivery_size: DeliverySize;
   categories: { name: string } | null;
   inventory: { quantity_available: number } | { quantity_available: number }[] | null;
@@ -45,7 +46,13 @@ const mapProduct = (supabase: SupabaseClient, row: ProductRow): VendorProduct =>
     category: row.categories?.name ?? "",
     price: Number(row.price),
     stock,
-    status: !row.is_active ? "Draft" : stock < 8 ? "Low stock" : "Active",
+    status: row.approval_status === "pending_review"
+      ? "Pending Review"
+      : row.approval_status === "rejected"
+        ? "Rejected"
+        : row.approval_status === "draft"
+          ? "Draft"
+          : stock < 8 ? "Low stock" : "Active",
     image: image ? supabase.storage.from("product-images").getPublicUrl(image.storage_path).data.publicUrl : "",
     sku: row.slug,
     description: row.description ?? "",
@@ -70,6 +77,7 @@ export const createVendorProductsService = (supabase: SupabaseClient) => ({
       description,
       price,
       is_active,
+      approval_status,
       delivery_size,
       categories(name),
       inventory!inventory_product_id_fkey(quantity_available),

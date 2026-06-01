@@ -21,9 +21,23 @@ type Product = {
   name: string;
   price: number | string;
   is_active: boolean;
+  approval_status: "draft" | "pending_review" | "approved" | "rejected";
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
   vendors: { business_name: string } | null;
   categories: { name: string } | null;
   inventory: { quantity_available: number }[] | null;
+};
+type Vendor = {
+  id: string;
+  business_name: string;
+  approval_status: "pending" | "approved" | "rejected";
+  created_at: string;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  users: { full_name: string } | null;
 };
 type Order = {
   id: string;
@@ -41,8 +55,12 @@ type Order = {
 };
 type DeliveryPartner = {
   id: string;
-  approval_status: string;
+  approval_status: "pending" | "approved" | "rejected";
   availability_status: string;
+  created_at: string;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
   users: { full_name: string } | null;
 };
 type DeliveryAssignment = {
@@ -52,6 +70,9 @@ type DeliveryAssignment = {
 };
 const statusLabels: Record<string, string> = { pending: "Pending", accepted: "Accepted", packed: "Packed", ready_for_pickup: "Ready for Pickup", picked_up: "Picked Up", out_for_delivery: "Out for Delivery", delivered: "Delivered" };
 const nextStatus: Record<string, string> = { pending: "accepted", accepted: "packed", packed: "ready_for_pickup" };
+const approvalLabels: Record<string, string> = { pending: "Pending", pending_review: "Pending Review", approved: "Approved", rejected: "Rejected", draft: "Draft" };
+const auditTime = (value: string | null) => value ? new Date(value).toLocaleString("en-IN") : "-";
+const badgeTone = (status: string) => status === "approved" ? "" : status === "rejected" ? "red" : "gold";
 
 export default function AdminPanel() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -62,6 +83,8 @@ export default function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [productsError, setProductsError] = useState("");
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [approvalsError, setApprovalsError] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersError, setOrdersError] = useState("");
   const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartner[]>([]);
@@ -70,7 +93,7 @@ export default function AdminPanel() {
 
   const loadProducts = async () => {
     const { data, error: loadError } = await authService.supabase.from("products")
-      .select("id, name, price, is_active, vendors(business_name), categories(name), inventory(quantity_available)")
+      .select("id, name, price, is_active, approval_status, reviewed_at, approved_at, rejected_at, vendors(business_name), categories(name), inventory(quantity_available)")
       .is("deleted_at", null).order("created_at", { ascending: false });
     if (loadError) {
       setProductsError(loadError.message);
@@ -78,6 +101,17 @@ export default function AdminPanel() {
     }
     setProducts(data as unknown as Product[]);
     setProductsError("");
+  };
+  const loadVendors = async () => {
+    const { data, error: loadError } = await authService.supabase.from("vendors")
+      .select("id, business_name, approval_status, created_at, reviewed_at, approved_at, rejected_at, users(full_name)")
+      .order("created_at", { ascending: false });
+    if (loadError) {
+      setApprovalsError(loadError.message);
+      return;
+    }
+    setVendors(data as unknown as Vendor[]);
+    setApprovalsError("");
   };
   const loadOrders = async () => {
     const { data, error: loadError } = await authService.supabase.from("orders")
@@ -92,7 +126,7 @@ export default function AdminPanel() {
   };
   const loadDelivery = async () => {
     const [{ data: partners, error: partnersError }, { data: assignments, error: assignmentsError }] = await Promise.all([
-      authService.supabase.from("delivery_partners").select("id, approval_status, availability_status, users(full_name)").eq("approval_status", "approved").order("created_at"),
+      authService.supabase.from("delivery_partners").select("id, approval_status, availability_status, created_at, reviewed_at, approved_at, rejected_at, users(full_name)").order("created_at", { ascending: false }),
       authService.supabase.from("delivery_assignments").select("order_id, delivery_partner_id, status").in("status", ["assigned", "accepted", "picked_up"]),
     ]);
     const loadError = partnersError ?? assignmentsError;
@@ -116,11 +150,27 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) void Promise.all([loadProducts(), loadOrders(), loadDelivery()]);
+    if (authenticated) void Promise.all([loadProducts(), loadVendors(), loadOrders(), loadDelivery()]);
   }, [authenticated]);
 
-  const setProductActive = async (product: Product, isActive: boolean) => {
-    const { error: updateError } = await authService.supabase.from("products").update({ is_active: isActive }).eq("id", product.id);
+  const reviewVendor = async (id: string, status: "approved" | "rejected") => {
+    const { error: updateError } = await authService.supabase.rpc("admin_review_vendor", { target_id: id, next_status: status });
+    if (updateError) {
+      setApprovalsError(updateError.message);
+      return;
+    }
+    await loadVendors();
+  };
+  const reviewDeliveryPartner = async (id: string, status: "approved" | "rejected") => {
+    const { error: updateError } = await authService.supabase.rpc("admin_review_delivery_partner", { target_id: id, next_status: status });
+    if (updateError) {
+      setApprovalsError(updateError.message);
+      return;
+    }
+    await loadDelivery();
+  };
+  const reviewProduct = async (product: Product, status: "approved" | "rejected") => {
+    const { error: updateError } = await authService.supabase.rpc("admin_review_product", { target_id: product.id, next_status: status });
     if (updateError) {
       setProductsError(updateError.message);
       return;
@@ -248,7 +298,7 @@ export default function AdminPanel() {
                   : order.status === "ready_for_pickup"
                     ? <select className="unassigned" defaultValue="" onChange={(event) => void assignDeliveryPartner(order.id, event.target.value)}>
                       <option value="" disabled>Assign partner</option>
-                      {deliveryPartners.map((partner) => <option key={partner.id} value={partner.id}>{partner.users?.full_name || "Delivery partner"} ({partner.availability_status})</option>)}
+                      {deliveryPartners.filter((partner) => partner.approval_status === "approved").map((partner) => <option key={partner.id} value={partner.id}>{partner.users?.full_name || "Delivery partner"} ({partner.availability_status})</option>)}
                     </select>
                     : "-"}</td>
                 <td>{nextStatus[order.status] ? <button className="approve" onClick={() => advanceOrder(order)}>Advance status</button> : "-"}</td>
@@ -257,6 +307,31 @@ export default function AdminPanel() {
             </tbody>
           </table>
         </div>
+      </section>
+      <section className="card">
+        <div className="card-head"><div><h2>Vendor approvals</h2><p>Review vendor accounts before their approved products can reach customers.</p></div></div>
+        {approvalsError && <p className="auth-error">{approvalsError}</p>}
+        <div className="table-wrap"><table>
+          <thead><tr><th>Vendor</th><th>Owner</th><th>Submitted</th><th>Status</th><th>Reviewed</th><th>Action</th></tr></thead>
+          <tbody>{vendors.map((vendor) => <tr key={vendor.id}>
+            <td><b>{vendor.business_name}</b></td><td>{vendor.users?.full_name || "-"}</td><td>{auditTime(vendor.created_at)}</td>
+            <td><span className={`badge ${badgeTone(vendor.approval_status)}`}>{approvalLabels[vendor.approval_status]}</span></td>
+            <td>{auditTime(vendor.reviewed_at)}</td>
+            <td><div className="actions"><button className="approve" onClick={() => void reviewVendor(vendor.id, "approved")}>Approve</button><button className="reject" onClick={() => void reviewVendor(vendor.id, "rejected")}>Reject</button></div></td>
+          </tr>)}{!vendors.length && <tr><td colSpan={6}>No vendors yet.</td></tr>}</tbody>
+        </table></div>
+      </section>
+      <section className="card">
+        <div className="card-head"><div><h2>Delivery partner approvals</h2><p>Only approved delivery partners can accept or receive assignments.</p></div></div>
+        <div className="table-wrap"><table>
+          <thead><tr><th>Partner</th><th>Availability</th><th>Submitted</th><th>Status</th><th>Reviewed</th><th>Action</th></tr></thead>
+          <tbody>{deliveryPartners.map((partner) => <tr key={partner.id}>
+            <td><b>{partner.users?.full_name || "Delivery partner"}</b></td><td>{partner.availability_status}</td><td>{auditTime(partner.created_at)}</td>
+            <td><span className={`badge ${badgeTone(partner.approval_status)}`}>{approvalLabels[partner.approval_status]}</span></td>
+            <td>{auditTime(partner.reviewed_at)}</td>
+            <td><div className="actions"><button className="approve" onClick={() => void reviewDeliveryPartner(partner.id, "approved")}>Approve</button><button className="reject" onClick={() => void reviewDeliveryPartner(partner.id, "rejected")}>Reject</button></div></td>
+          </tr>)}{!deliveryPartners.length && <tr><td colSpan={6}>No delivery partners yet.</td></tr>}</tbody>
+        </table></div>
       </section>
       <section className="card">
         <div className="card-head">
@@ -273,13 +348,13 @@ export default function AdminPanel() {
         <div className="card-head">
           <div>
             <h2>Products</h2>
-            <p>Approve new vendor products or deactivate products that should leave the customer catalogue.</p>
+            <p>Review vendor products before they enter the customer catalogue.</p>
           </div>
         </div>
         {productsError && <p className="auth-error">{productsError}</p>}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Product</th><th>Vendor</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Product</th><th>Vendor</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Reviewed</th><th>Action</th></tr></thead>
             <tbody>
               {products.map((product) => <tr key={product.id}>
                 <td><b>{product.name}</b></td>
@@ -287,10 +362,11 @@ export default function AdminPanel() {
                 <td>{product.categories?.name ?? "-"}</td>
                 <td>Rs {Number(product.price).toLocaleString("en-IN")}</td>
                 <td>{product.inventory?.[0]?.quantity_available ?? 0}</td>
-                <td><span className={`badge ${product.is_active ? "" : "gold"}`}>{product.is_active ? "Active" : "Pending"}</span></td>
-                <td><button className={product.is_active ? "reject" : "approve"} onClick={() => setProductActive(product, !product.is_active)}>{product.is_active ? "Deactivate" : "Approve"}</button></td>
+                <td><span className={`badge ${badgeTone(product.approval_status)}`}>{approvalLabels[product.approval_status]}</span></td>
+                <td>{auditTime(product.reviewed_at)}</td>
+                <td><div className="actions"><button className="approve" onClick={() => void reviewProduct(product, "approved")}>Approve</button><button className="reject" onClick={() => void reviewProduct(product, "rejected")}>Reject</button></div></td>
               </tr>)}
-              {!products.length && <tr><td colSpan={7}>No products yet.</td></tr>}
+              {!products.length && <tr><td colSpan={8}>No products yet.</td></tr>}
             </tbody>
           </table>
         </div>

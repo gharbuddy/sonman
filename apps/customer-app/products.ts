@@ -25,6 +25,7 @@ type ProductRow = {
   price: string | number;
   delivery_size: DeliverySize;
   categories: { name: string } | null;
+  vendors: { approval_status: string } | null;
   product_images:
     | { storage_path: string; is_primary: boolean; sort_order: number }[]
     | null;
@@ -36,9 +37,11 @@ export async function loadActiveProducts(
   const { data, error } = await supabase
     .from("products")
     .select(
-      "id, vendor_id, name, description, price, delivery_size, categories(name), product_images(storage_path, is_primary, sort_order)",
+      "id, vendor_id, name, description, price, delivery_size, categories(name), vendors!inner(approval_status), product_images(storage_path, is_primary, sort_order)",
     )
     .eq("is_active", true)
+    .eq("approval_status", "approved")
+    .eq("vendors.approval_status", "approved")
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
