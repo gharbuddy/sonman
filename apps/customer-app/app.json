@@ -16,7 +16,8 @@
       "ios"
     ],
     "android": {
-      "package": "com.sonman.customer"
+      "package": "com.sonman.customer",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "plugins": ["expo-notifications"]
   }

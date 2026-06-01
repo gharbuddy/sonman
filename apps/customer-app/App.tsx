@@ -12,9 +12,9 @@ import { addressText, createCustomerProfileService, initials, type AddressInput,
 import {
   Image,
   Animated,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -25,7 +25,20 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from "@expo-google-fonts/inter";
 
+import {
+  Poppins_600SemiBold,
+  Poppins_700Bold,
+  Poppins_800ExtraBold,
+} from "@expo-google-fonts/poppins";
 type Screen =
   | "splash"
   | "onboarding"
@@ -79,15 +92,16 @@ const offers: ReadonlyArray<readonly [string, string, string, string]> = [
 const vendors: ReadonlyArray<readonly [string, string, string, string]> = [];
 const SERVICE_STATES = ["Jammu and Kashmir"];
 const SERVICE_DISTRICTS = ["Kulgam"];
-const premiumFont = Platform.select({ ios: "System", android: "sans-serif", default: "system-ui" });
+const premiumFont = "Poppins_700Bold";
+const bodyFont = "Inter_400Regular";
+const mediumFont = "Inter_600SemiBold";
 
 const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
 const discount = ({ price, oldPrice }: Product) =>
   Math.round(((oldPrice - price) / oldPrice) * 100);
 
-const SAFE_TOP = Platform.OS === "android" ? StatusBar.currentHeight ?? 24 : 0;
-const BOTTOM_NAV_HEIGHT = 68;
-const BOTTOM_SAFE_SPACE = Platform.OS === "android" ? 36 : 18;
+const BOTTOM_NAV_HEIGHT = 74;
+const MIN_ANDROID_BOTTOM_INSET = Platform.OS === "android" ? 36 : 0;
 const CHECKOUT_DISTANCE_KM = 0;
 WebBrowser.maybeCompleteAuthSession();
 
@@ -119,6 +133,16 @@ const normalizeDateOfBirth = (day: string, month: string, year: string) => {
 };
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Poppins_600SemiBold,
+    Poppins_700Bold,
+    Poppins_800ExtraBold,
+  });
+
   const [screen, setScreen] = useState<Screen>("splash");
   const [minimumSplashElapsed, setMinimumSplashElapsed] = useState(false);
   const [launchReady, setLaunchReady] = useState(false);
@@ -263,7 +287,7 @@ export default function App() {
       setOrders(await ordersService.listOrders());
       setScreen("orders");
     } catch (cause) {
-      setOrderError(cause instanceof Error ? cause.message : "Order could not be placed.");
+      setOrderError(cause instanceof Error ? cause.message : "Payment failed. Your order was not created.");
     } finally {
       setPlacingOrder(false);
     }
@@ -273,7 +297,7 @@ export default function App() {
   const subtotal = cartProducts.reduce((sum, product) => sum + product.price * cart[product.id], 0);
   const deliveryQuote = quoteDelivery(cartProducts, CHECKOUT_DISTANCE_KM);
 
-  if (!launchReady) return <SafeLayout><Splash opacity={splashOpacity} /></SafeLayout>;
+  if (!fontsLoaded || !launchReady) return <SafeLayout><Splash opacity={splashOpacity} /></SafeLayout>;
   if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("home")} /></SafeLayout>;
   if (screen === "login" || screen === "signup") {
     return (
@@ -440,7 +464,7 @@ function Home({ profile, address, products, productsError, onProfile, onAddresse
             <Text style={styles.deliverText} numberOfLines={1}>{address ? addressText(address) : "Kulgam, Jammu and Kashmir"}</Text>
           </View>
         </Pressable>
-        <Pressable style={styles.profileIconBtn} onPress={onProfile}><Text style={styles.profileIconText}>{initials(profile?.full_name ?? "") || "You"}</Text></Pressable>
+        <Pressable style={styles.profileIconBtn} onPress={onProfile}><Text style={styles.profileMiniText}>{initials(profile?.full_name ?? "") || "You"}</Text></Pressable>
       </View>
       <SearchBar />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickCategoryRail}>
@@ -564,7 +588,7 @@ function Checkout({ address, subtotal, quote, busy, error, onBack, onAddresses, 
     <ScreenScroll>
       <PageHeader title="Checkout" onBack={onBack} />
       <CheckoutSection icon="PIN" title="Delivery address" action={address ? "Change" : "Add"} onAction={onAddresses}><Text style={styles.rowTitle}>{address?.recipientName ?? "No default address selected"}</Text><Text style={styles.smallMuted}>{address ? addressText(address) : "Add a saved address before placing your order."}</Text></CheckoutSection>
-      <CheckoutSection icon="PAY" title="Payment method" action="Prepaid"><Text style={styles.rowTitle}>Online Payment Only</Text><Text style={styles.smallMuted}>Payment integration is pending. The order stores a placeholder payment record for now.</Text></CheckoutSection>
+      <CheckoutSection icon="PAY" title="Payment method" action="Prepaid"><Text style={styles.rowTitle}>Razorpay secure checkout</Text><Text style={styles.smallMuted}>Pay with UPI, Google Pay, PhonePe, Paytm, BHIM, cards, net banking, or wallets.</Text></CheckoutSection>
       <CheckoutSection icon="BOX" title="Delivery option" action={`Zone ${quote.zone}`}><Text style={styles.rowTitle}>Standard delivery</Text><Text style={styles.smallMuted}>Expected by {formatDeliveryDate(quote.expectedDate)}</Text><Text style={styles.smallMuted}>{quote.fee === null ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(quote.fee)}`}</Text></CheckoutSection>
       <OrderTotal subtotal={subtotal} deliveryFee={quote.fee} />
       <Pressable style={styles.policyRow} onPress={() => setPolicyAccepted((accepted) => !accepted)}>
@@ -572,7 +596,7 @@ function Checkout({ address, subtotal, quote, busy, error, onBack, onAddresses, 
         <Text style={styles.policyText}>I understand this order is prepaid. Cancellation is not allowed after order confirmation. Replacement is allowed only for damaged, defective, or incorrect products reported at delivery.</Text>
       </Pressable>
       {!!error && <Text style={styles.authError}>{error}</Text>}
-      <PrimaryButton label={busy ? "Placing order..." : `Place order  ·  ${money(subtotal + (quote.fee ?? 0))}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted || !address} />
+      <PrimaryButton label={busy ? "Opening payment..." : `Place order  ·  ${money(subtotal + (quote.fee ?? 0))}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted || !address} />
     </ScreenScroll>
   );
 }
@@ -752,7 +776,20 @@ function Empty({ title, subtitle }: { title: string; subtitle: string }) {
 }
 
 function SafeLayout({ children }: { children: ReactNode }) {
-  return <SafeAreaView style={styles.safe}>{children}</SafeAreaView>;
+  return (
+    <SafeAreaProvider>
+      <SafeAreaFrame>{children}</SafeAreaFrame>
+    </SafeAreaProvider>
+  );
+}
+
+function SafeAreaFrame({ children }: { children: ReactNode }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.safe, { paddingTop: insets.top }]}>
+      {children}
+    </View>
+  );
 }
 
 function ScreenScroll({ children }: { children: ReactNode; sticky?: boolean }) {
@@ -760,31 +797,60 @@ function ScreenScroll({ children }: { children: ReactNode; sticky?: boolean }) {
 }
 
 function ScreenShell({ children, contentContainerStyle }: { children: ReactNode; contentContainerStyle?: object }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, MIN_ANDROID_BOTTOM_INSET);
+
   return (
-    <View style={styles.screenShell}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.screenShell}
+      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+    >
       <ExpoStatusBar style="dark" />
       <ScrollView
-        contentContainerStyle={[styles.screen, contentContainerStyle]}
+        contentContainerStyle={[
+          styles.screen,
+          { paddingBottom: BOTTOM_NAV_HEIGHT + bottomInset + 28 },
+          contentContainerStyle,
+        ]}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
         {children}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 function BottomNav({ screen, count, onNavigate }: { screen: Screen; count: number; onNavigate: (screen: Screen) => void }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, MIN_ANDROID_BOTTOM_INSET);
   const nav = [["⌂", "Home", "home"], ["▦", "Categories", "categories"], ["🛒", "Cart", "cart"], ["▤", "Orders", "orders"], ["☻", "Account", "profile"]] as const;
-  return <View style={styles.bottomNav}>{nav.map(([icon, label, target]) => <Pressable key={target} hitSlop={10} style={styles.navItem} onPress={() => onNavigate(target)}><View><Text style={[styles.navIcon, screen === target && styles.navActive]}>{icon}</Text>{target === "cart" && count > 0 && <Text style={styles.cartCount}>{count}</Text>}</View><Text style={[styles.navLabel, screen === target && styles.navActive]}>{label}</Text></Pressable>)}</View>;
+
+  return (
+    <View style={[styles.bottomNav, { height: BOTTOM_NAV_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
+      {nav.map(([icon, label, target]) => (
+        <Pressable key={target} hitSlop={10} style={styles.navItem} onPress={() => onNavigate(target)}>
+          <View>
+            <Text style={[styles.navIcon, screen === target && styles.navActive]}>{icon}</Text>
+            {target === "cart" && count > 0 && <Text style={styles.cartCount}>{count}</Text>}
+          </View>
+          <Text style={[styles.navLabel, screen === target && styles.navActive]}>{label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, paddingTop: Platform.OS === "android" ? SAFE_TOP : 0, backgroundColor: palette.cream }, screenShell: { flex: 1, backgroundColor: palette.cream },
+  safe: { flex: 1, backgroundColor: palette.cream }, screenShell: { flex: 1, backgroundColor: palette.cream },
   flex: { flex: 1 }, flexEnd: { marginLeft: "auto" }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, alignRight: { textAlign: "right" },
   splashFade: { flex: 1 }, splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F1E5" }, splashSky: { position: "absolute", left: 0, right: 0, bottom: 0, height: "48%", overflow: "hidden", backgroundColor: "#E4EEE6" }, splashSun: { position: "absolute", right: 42, top: 30, width: 62, height: 62, borderRadius: 31, backgroundColor: "#E9C984" }, splashLake: { position: "absolute", left: 0, right: 0, bottom: 0, height: 66, backgroundColor: "#B7D3CC" }, mountain: { position: "absolute", width: 300, height: 300, borderRadius: 42, transform: [{ rotate: "45deg" }] }, mountainFar: { left: 92, bottom: -118, backgroundColor: "#CBD9CD" }, mountainBack: { left: -65, bottom: -112, backgroundColor: "#9DBBAA" }, mountainFront: { right: -70, bottom: -145, backgroundColor: "#386F59" }, splashEyebrow: { color: palette.gold, fontSize: 11, fontWeight: "700", letterSpacing: 2, marginBottom: 18 }, brandMark: { width: 76, height: 76, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16, elevation: 4, shadowColor: palette.black, shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, brandMarkText: { color: palette.goldPale, fontFamily: premiumFont, fontSize: 40, fontWeight: "700" }, logo: { color: palette.black, fontFamily: premiumFont, fontSize: 28, fontWeight: "800", letterSpacing: -1 }, splashLogo: { color: palette.black, fontFamily: premiumFont, fontSize: 40, fontWeight: "700", letterSpacing: 1 }, splashSlogan: { color: palette.green, fontSize: 17, fontWeight: "700", marginTop: 11 }, splashTag: { color: palette.muted, fontSize: 13, marginTop: 5 }, splashMarketCard: { position: "absolute", left: 24, right: 24, bottom: 34, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.90)" }, splashMarketIcon: { color: palette.gold, fontSize: 10, fontWeight: "700", letterSpacing: 1 }, splashMarketText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   onboarding: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22 }, onboardingVisual: { height: "43%", overflow: "hidden", borderRadius: 30, backgroundColor: palette.sand }, fillImage: { width: "100%", height: "100%" }, floatingNote: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 8, alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.94)" }, noteText: { color: palette.black, fontSize: 12, fontWeight: "600" }, onboardingTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, dots: { color: palette.gold, textAlign: "center", marginVertical: 12, letterSpacing: 4 },
   auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, authDivider: { color: palette.muted, textAlign: "center", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white, marginBottom: 12 }, select: { height: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginBottom: 12 }, selectText: { color: palette.black, fontSize: 14 }, selectPlaceholder: { color: palette.muted, fontSize: 14 }, selectMenu: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: -7, marginBottom: 12 }, selectOption: { paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
-  screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 98, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, formIntro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginBottom: 16 }, helpCard: { gap: 5, padding: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginBottom: 10 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 22, lineHeight: 28, fontWeight: "700", marginBottom: 8 }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
+  screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, formIntro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginBottom: 16 }, helpCard: { gap: 5, padding: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginBottom: 10 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 22, lineHeight: 28, fontWeight: "700", marginBottom: 8 }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
   searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 50, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 14, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, mic: { color: palette.gold, fontSize: 12, fontWeight: "600" },
   searchDock: { marginHorizontal: -14, paddingHorizontal: 14, backgroundColor: palette.cream }, location: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, marginBottom: 8 }, locationIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, locationLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, locationText: { color: palette.muted, fontSize: 12, marginTop: 1 }, chevron: { color: palette.muted, fontSize: 15, fontWeight: "600" }, aiPill: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 15, backgroundColor: palette.goldPale, marginBottom: 11 }, aiBadge: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.white }, aiBadgeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, aiTitle: { color: palette.black, fontSize: 14, fontWeight: "600" }, arrow: { color: palette.muted, fontSize: 29, lineHeight: 30 }, horizontal: { marginBottom: 13 }, chip: { height: 39, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, marginRight: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white }, chipIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, chipText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   categoryRail: { gap: 7, paddingBottom: 12 }, categoryBubble: { width: 59, alignItems: "center", gap: 5 }, categoryCircle: { width: 50, height: 50, alignItems: "center", justifyContent: "center", borderRadius: 25 }, categoryCircleText: { color: palette.black, fontSize: 12, fontWeight: "700" }, categoryBubbleText: { color: palette.black, fontSize: 12, fontWeight: "600" }, offerRail: { gap: 10 }, offer: { height: 142, flexDirection: "row", overflow: "hidden", borderRadius: 17, padding: 15 }, offerKicker: { color: palette.gold, fontSize: 12, fontWeight: "600" }, offerTitle: { color: palette.black, fontSize: 20, lineHeight: 24, fontWeight: "700", marginTop: 7 }, offerAction: { color: palette.black, fontSize: 12, fontWeight: "600", marginTop: 10 }, offerImage: { width: 112, height: 142, marginVertical: -15, marginRight: -15 },
@@ -798,7 +864,7 @@ const styles = StyleSheet.create({
   primaryButton: { minHeight: 55, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderRadius: 17, backgroundColor: palette.black, marginVertical: 6 }, primaryButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, disabled: { opacity: 0.35 }, checkoutCard: { padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, checkoutHeader: { flexDirection: "row", alignItems: "center", gap: 9 }, checkoutIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.sand }, checkoutIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, checkoutBody: { gap: 3, paddingLeft: 43, paddingTop: 8 }, policyRow: { flexDirection: "row", gap: 10, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginVertical: 8 }, checkbox: { width: 20, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.gold, borderRadius: 5 }, checkboxChecked: { backgroundColor: palette.gold }, checkboxMark: { color: palette.white, fontSize: 14, fontWeight: "700" }, policyText: { flex: 1, color: palette.muted, fontSize: 12, lineHeight: 18 }, policyLabel: { color: palette.gold, fontSize: 12, fontWeight: "700", marginTop: 10 },
   tabs: { flexDirection: "row", gap: 22, marginTop: 19, borderBottomWidth: 1, borderBottomColor: palette.line }, tab: { color: palette.muted, fontSize: 14, fontWeight: "600", paddingBottom: 10 }, tabActive: { color: palette.black, fontSize: 14, fontWeight: "700", paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: palette.gold }, orderCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13 }, orderTitle: { marginTop: 9 }, statusActive: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.goldPale }, statusDelivered: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.green, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.greenPale }, orderImages: { flexDirection: "row", gap: 7, marginTop: 10 }, orderImage: { width: 52, height: 56, borderRadius: 10 }, progress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.line, marginTop: 14 }, progressDone: { width: "68%", height: 5, borderRadius: 3, backgroundColor: palette.gold }, track: { minHeight: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, marginTop: 13 }, trackText: { color: palette.black, fontSize: 12, fontWeight: "600" },
   profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 16, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white, marginTop: 15 }, profileDetailsCard: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 12 }, profileDetail: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, profileDetailLast: { borderBottomWidth: 0 }, profileDetailLabel: { color: palette.muted, fontSize: 12, fontWeight: "600" }, profileDetailValue: { flexShrink: 1, color: palette.black, textAlign: "right", fontSize: 14, fontWeight: "600" }, profileMenuCard: { overflow: "hidden", paddingHorizontal: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, editProfileCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, dobRow: { flexDirection: "row", gap: 9, marginBottom: 12 }, dobField: { flex: 1, height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.cream }, dobYear: { flex: 1.45 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontFamily: premiumFont, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1, marginTop: 22, marginBottom: 8 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: palette.line }, profileRowLast: { borderBottomWidth: 0 }, profileIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.goldPale }, profileIconText: { color: palette.gold, fontSize: 11, fontWeight: "700" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 }, addressCard: { gap: 4, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 10 }, addressActions: { flexDirection: "row", gap: 18, marginTop: 8 },
-  empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 0, right: 0, bottom: 0, height: 76, zIndex: 100, flexDirection: "row", alignItems: "center", paddingTop: 6, paddingBottom: Platform.OS === "android" ? 8 : 12, borderTopWidth: 1, borderColor: palette.line, backgroundColor: palette.white, elevation: 8 }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 22, lineHeight: 24, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 11, fontWeight: "500" }, navActive: { color: palette.blue }, navIndicator: { display: "none" }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
+  empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: "row", alignItems: "flex-start", paddingTop: 10, borderTopWidth: 1, borderColor: palette.line, backgroundColor: palette.white, elevation: 8, shadowColor: palette.black, shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 22, lineHeight: 24, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 11, fontWeight: "500" }, navActive: { color: palette.blue }, navIndicator: { display: "none" }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
 
   splashClean: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0B1220", overflow: "hidden" },
   splashGlowOne: { position: "absolute", width: 330, height: 330, borderRadius: 165, backgroundColor: "rgba(245,158,11,0.16)", top: -80, right: -100 },
@@ -815,7 +881,7 @@ const styles = StyleSheet.create({
   deliverSmall: { color: palette.black, fontSize: 14, fontWeight: "700" },
   deliverText: { color: palette.muted, fontSize: 12, maxWidth: 250 },
   profileIconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: palette.black },
-  profileIconText: { color: palette.white, fontSize: 12, fontWeight: "800" },
+  profileMiniText: { color: palette.white, fontSize: 12, fontWeight: "800" },
   quickCategoryRail: { gap: 12, paddingVertical: 10 },
   quickCategory: { width: 70, alignItems: "center" },
   quickCategoryIcon: { width: 58, height: 58, borderRadius: 18, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line },

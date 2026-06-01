@@ -9,6 +9,7 @@ import catalogRouter from "./routes/catalog.js";
 import meRouter from "./routes/me.js";
 import notificationsRouter from "./routes/notifications.js";
 import ordersRouter from "./routes/orders.js";
+import paymentsRouter from "./routes/payments.js";
 import profilesRouter from "./routes/profiles.js";
 
 export const app = express();
@@ -21,6 +22,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/catalog", catalogRouter);
 app.use("/api/v1/me", meRouter);
 app.use("/api/v1/orders", ordersRouter);
+app.use("/api/v1/payments/razorpay", paymentsRouter);
 app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/profiles", profilesRouter);
 app.use("/api/v1/admin", adminRouter);

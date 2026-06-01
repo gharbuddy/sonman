@@ -1,4 +1,5 @@
-import * as Notifications from "expo-notifications";
+import Constants, { ExecutionEnvironment } from "expo-constants";
+import type * as ExpoNotifications from "expo-notifications";
 import { useCallback, useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import type { SupabaseClient } from "@sonman/auth-service";
@@ -26,16 +27,26 @@ const defaults: NotificationPreference = {
   delivery_assignments_enabled: true,
 };
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+let handlerConfigured = false;
 
-const registerToken = async (supabase: SupabaseClient, app: NotificationApp, token: Notifications.DevicePushToken) => {
+const loadNotifications = async () => {
+  if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) return;
+  const Notifications = await import("expo-notifications");
+  if (!handlerConfigured) {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+    handlerConfigured = true;
+  }
+  return Notifications;
+};
+
+const registerToken = async (supabase: SupabaseClient, app: NotificationApp, token: ExpoNotifications.DevicePushToken) => {
   const { error } = await supabase.rpc("register_push_token", {
     device_token: String(token.data),
     token_platform: token.type === "apns" ? "ios" : "android",
@@ -48,8 +59,10 @@ export function usePushNotifications(supabase: SupabaseClient, authenticated: bo
   useEffect(() => {
     if (!authenticated || Platform.OS !== "android") return;
     let active = true;
-    let subscription: Notifications.EventSubscription | undefined;
+    let subscription: ExpoNotifications.EventSubscription | undefined;
     const configure = async () => {
+      const Notifications = await loadNotifications();
+      if (!Notifications) return;
       await Notifications.setNotificationChannelAsync("orders", {
         name: "Order updates",
         importance: Notifications.AndroidImportance.HIGH,

@@ -10,6 +10,8 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  RAZORPAY_KEY_ID: z.string().min(1),
+  RAZORPAY_KEY_SECRET: z.string().min(1),
   FCM_PROJECT_ID: optionalString,
   FCM_CLIENT_EMAIL: optionalEmail,
   FCM_PRIVATE_KEY: optionalString,
