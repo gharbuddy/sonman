@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Sonman Customer",
+    "slug": "sonman-customer",
+    "scheme": "sonman-customer",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F8F5EF",
+    "description": "Sonman customer mobile application",
+    "splash": {
+      "backgroundColor": "#F8F5EF",
+      "resizeMode": "contain"
+    },
+    "platforms": ["android", "ios"],
+    "android": {
+      "package": "com.sonman.customer",
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": ["expo-notifications"],
+    "extra": {
+      "eas": {
+        "projectId": "4c243479-09c2-4359-ab7d-161f27151354"
+      }
+    }
+  }
+}

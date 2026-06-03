@@ -1,0 +1,82 @@
+import type { SupabaseClient } from "@sonman/auth-service";
+import type { DeliverySize } from "./delivery";
+
+export type CustomerProduct = {
+  id: string;
+  vendorId: string;
+  name: string;
+  category: string;
+  price: number;
+  oldPrice: number;
+  rating: number;
+  reviews: number;
+  delivery: string;
+  image: string;
+  images: string[];
+  variants: string[];
+  badge?: string;
+  description: string;
+  deliverySize: DeliverySize;
+};
+
+type ProductRow = {
+  id: string;
+  vendor_id: string;
+  name: string;
+  description: string | null;
+  price: string | number;
+  delivery_size: DeliverySize;
+  variants: string[] | null;
+  categories: { name: string } | null;
+  vendors: { approval_status: string } | null;
+  reviews: { rating: number }[] | null;
+  product_images:
+    | { storage_path: string; is_primary: boolean; sort_order: number }[]
+    | null;
+};
+
+export async function loadActiveProducts(
+  supabase: SupabaseClient,
+): Promise<CustomerProduct[]> {
+  const { data, error } = await supabase
+    .from("products")
+    .select(
+      "id, vendor_id, name, description, price, delivery_size, variants, categories(name), vendors!inner(approval_status), product_images(storage_path, is_primary, sort_order), reviews(rating)",
+    )
+    .eq("is_active", true)
+    .eq("approval_status", "approved")
+    .eq("vendors.approval_status", "approved")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  return (data as unknown as ProductRow[]).map((row) => {
+    const images = [...(row.product_images ?? [])].sort(
+      (a, b) =>
+        Number(b.is_primary) - Number(a.is_primary) ||
+        a.sort_order - b.sort_order,
+    ).map((image) => supabase.storage.from("product-images").getPublicUrl(image.storage_path).data.publicUrl);
+
+    const price = Number(row.price);
+    const reviews = row.reviews ?? [];
+    const rating = reviews.length ? reviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviews.length : 0;
+
+    return {
+      id: row.id,
+      vendorId: row.vendor_id,
+      name: row.name,
+      category: row.categories?.name ?? "",
+      price,
+      oldPrice: price,
+      rating: Number(rating.toFixed(1)),
+      reviews: reviews.length,
+      delivery: "standard",
+      image: images[0] ?? "",
+      images,
+      variants: row.variants ?? [],
+      description: row.description ?? "",
+      deliverySize: row.delivery_size,
+    };
+  });
+}
