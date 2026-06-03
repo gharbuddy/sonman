@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2020"
+  },
+  "exclude": ["App.1tsx", "App2.tsx", "App3.tsx", "app4.tsx", "App_backup.tsx"]
+}

@@ -1,8 +1,14 @@
 import type { SupabaseClient } from "@sonman/auth-service";
-import * as Linking from "expo-linking";
-import * as WebBrowser from "expo-web-browser";
+import RazorpayCheckout from "react-native-razorpay";
 
 const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "") ?? "";
+const razorpayKeyId = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID?.trim() ?? "";
+
+type RazorpaySuccess = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
 
 const paymentErrorMessage = (cause: unknown) => {
   if (cause instanceof Error) return cause.message;
@@ -60,26 +66,31 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
     if (error) throw error;
   },
   async placeOrder(deliveryAddress: Record<string, unknown>, deliveryDistanceKm = 0) {
-    const callbackUrl = Linking.createURL("payments/paytm/callback");
-    const checkout = await this.apiRequest("/api/v1/payments/paytm/initiate", {
+    if (!razorpayKeyId) throw new Error("Payment setup error: add EXPO_PUBLIC_RAZORPAY_KEY_ID to the customer app environment.");
+    const checkout = await this.apiRequest("/api/v1/payments/razorpay/orders", {
       deliveryAddress,
       deliveryDistanceKm,
-      callbackUrl,
-    }) as { orderId: string; checkoutUrl: string };
-    let callback: WebBrowser.WebBrowserAuthSessionResult;
+    }) as { orderId: string; amount: number; currency: string };
+    let payment: RazorpaySuccess;
     try {
-      callback = await WebBrowser.openAuthSessionAsync(checkout.checkoutUrl, callbackUrl);
+      payment = await RazorpayCheckout.open({
+        key: razorpayKeyId,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        order_id: checkout.orderId,
+        name: "Sonman",
+        description: "Sonman prepaid order",
+        theme: { color: "#F59E0B" },
+      }) as RazorpaySuccess;
     } catch (cause) {
       throw new Error(paymentErrorMessage(cause));
     }
-    if (callback.type !== "success" || !callback.url) {
-      throw new Error("Payment was cancelled. Your order was not created.");
-    }
-    await this.apiRequest("/api/v1/payments/paytm/verify", {
+    await this.apiRequest("/api/v1/payments/razorpay/verify", {
       deliveryAddress,
       deliveryDistanceKm,
-      orderId: checkout.orderId,
-      callbackUrl: callback.url,
+      razorpayOrderId: payment.razorpay_order_id,
+      razorpayPaymentId: payment.razorpay_payment_id,
+      razorpaySignature: payment.razorpay_signature,
     });
   },
   async listOrders(): Promise<CustomerOrder[]> {
