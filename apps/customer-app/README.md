@@ -43,18 +43,22 @@ the Android package name `com.sonman.customer`. The app uses the custom scheme
 declared in `app.json`, opens the Supabase OAuth URL in a browser auth session,
 and exchanges the callback code for a Supabase session.
 
-## Paytm Checkout
+## UPI Payment
 
 The customer app expects the authenticated API to expose:
 
 ```text
-POST /api/v1/payments/paytm/initiate
-POST /api/v1/payments/paytm/verify
+POST /api/v1/payments/upi/manual-confirm
 ```
 
-`initiate` returns `{ orderId, checkoutUrl }`. `verify` must validate Paytm's
-checksum, confirm `TXN_SUCCESS` with Paytm, and only then call
-`public.place_paid_cart_order(...)` using the service role. Apply
-`supabase/migrations/202606020001_paytm_payments.sql` before enabling checkout.
-Keep Paytm merchant secrets on the API server; never expose them through
-`EXPO_PUBLIC_*` variables.
+Checkout opens the Android UPI intent with the configured merchant UPI ID. After
+the user returns, the app shows a payment confirmation screen. "I have paid"
+creates the order through `public.place_upi_manual_cart_order(...)` with
+`payment_gateway = upi_manual` and `payment_status = pending_verification`.
+
+Configure the Expo public payment variables before building:
+
+```text
+EXPO_PUBLIC_SONMAN_UPI_ID=yourupi@bank
+EXPO_PUBLIC_PAYMENT_GATEWAY=upi
+```

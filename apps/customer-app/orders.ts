@@ -1,14 +1,8 @@
 import type { SupabaseClient } from "@sonman/auth-service";
-import * as Linking from "expo-linking";
-import * as WebBrowser from "expo-web-browser";
 
-const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "") ?? "";
-
-const paymentErrorMessage = (cause: unknown) => {
-  if (cause instanceof Error) return cause.message;
-  if (cause && typeof cause === "object" && "description" in cause) return String(cause.description);
-  return "Payment failed or was cancelled. Your order was not created.";
-};
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "") ||
+  "https://underpass-dig-vessel.ngrok-free.dev";
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "Pending",
@@ -34,59 +28,73 @@ export type CustomerOrder = {
 
 export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
   async apiRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    if (!apiUrl) throw new Error("API setup error: add EXPO_PUBLIC_API_URL to the customer app environment.");
     const { data: { session }, error } = await supabase.auth.getSession();
+
     if (error) throw error;
     if (!session) throw new Error("Sign in to place your order.");
-    const response = await fetch(`${apiUrl}${path}`, {
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
+
     const result = await response.json() as T & { error?: string };
-    if (!response.ok) throw new Error(result.error ?? "Payment request failed.");
+
+    if (!response.ok) {
+      throw new Error(result.error ?? "Payment request failed.");
+    }
+
     return result;
   },
+
   async loadCart(): Promise<Record<string, number>> {
-    const { data: cart, error: cartError } = await supabase.from("carts").select("id").maybeSingle();
+    const { data: cart, error: cartError } = await supabase
+      .from("carts")
+      .select("id")
+      .maybeSingle();
+
     if (cartError) throw cartError;
     if (!cart) return {};
-    const { data, error } = await supabase.from("cart_items").select("product_id, quantity").eq("cart_id", cart.id);
+
+    const { data, error } = await supabase
+      .from("cart_items")
+      .select("product_id, quantity")
+      .eq("cart_id", cart.id);
+
     if (error) throw error;
+
     return Object.fromEntries(data.map((item) => [item.product_id, item.quantity]));
   },
+
   async setCartItem(productId: string, quantity: number) {
-    const { error } = await supabase.rpc("set_cart_item", { product: productId, item_quantity: quantity });
+    const { error } = await supabase.rpc("set_cart_item", {
+      product: productId,
+      item_quantity: quantity,
+    });
+
     if (error) throw error;
   },
-  async placeOrder(deliveryAddress: Record<string, unknown>, deliveryDistanceKm = 0) {
-    const callbackUrl = Linking.createURL("payments/paytm/callback");
-    const checkout = await this.apiRequest("/api/v1/payments/paytm/initiate", {
+
+  async placeOrder(deliveryAddress: Record<string, unknown>, deliveryDistanceKm = 0, paymentReference?: string) {
+    await this.apiRequest("/api/v1/payments/upi/manual-confirm", {
       deliveryAddress,
       deliveryDistanceKm,
-      callbackUrl,
-    }) as { orderId: string; checkoutUrl: string };
-    let callback: WebBrowser.WebBrowserAuthSessionResult;
-    try {
-      callback = await WebBrowser.openAuthSessionAsync(checkout.checkoutUrl, callbackUrl);
-    } catch (cause) {
-      throw new Error(paymentErrorMessage(cause));
-    }
-    if (callback.type !== "success" || !callback.url) {
-      throw new Error("Payment was cancelled. Your order was not created.");
-    }
-    await this.apiRequest("/api/v1/payments/paytm/verify", {
-      deliveryAddress,
-      deliveryDistanceKm,
-      orderId: checkout.orderId,
-      callbackUrl: callback.url,
+      paymentReference: paymentReference?.trim() || undefined,
     });
   },
+
   async listOrders(): Promise<CustomerOrder[]> {
-    const { data, error } = await supabase.from("orders")
+    const { data, error } = await supabase
+      .from("orders")
       .select("id, order_number, status, total_amount, delivery_fee_amount, expected_delivery_date, delivery_quote_required, created_at, order_items(id, product_name, quantity)")
       .order("created_at", { ascending: false });
+
     if (error) throw error;
+
     return data.map((order) => ({
       id: order.id,
       orderNumber: order.order_number,
@@ -96,7 +104,11 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
       expectedDeliveryDate: order.expected_delivery_date,
       deliveryQuoteRequired: order.delivery_quote_required,
       createdAt: order.created_at,
-      items: order.order_items.map((item) => ({ id: item.id, name: item.product_name, quantity: item.quantity })),
+      items: order.order_items.map((item) => ({
+        id: item.id,
+        name: item.product_name,
+        quantity: item.quantity,
+      })),
     }));
   },
 });

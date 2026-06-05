@@ -19,6 +19,8 @@
     },
     "plugins": ["expo-notifications"],
     "extra": {
+      "apiUrl": "https://underpass-dig-vessel.ngrok-free.dev",
+      "paymentGateway": "upi",
       "eas": {
         "projectId": "4c243479-09c2-4359-ab7d-161f27151354"
       }
