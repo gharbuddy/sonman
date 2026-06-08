@@ -1,4 +1,4 @@
-package com.sonman.customer
+package com.sonman.shop
 
 import android.os.Build
 import android.os.Bundle

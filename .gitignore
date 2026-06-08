@@ -44,3 +44,20 @@ apps/*/google-services.json
 # PNPM
 .pnpm-store/
 *.tsbuildinfo
+# Android signing keys
+*.jks
+*.keystore
+
+# Android signing passwords
+**/gradle.properties
+
+# Expo generated files
+.expo/
+.expo-export/
+
+# Build outputs
+android/app/build/
+android/.gradle/
+*.jks
+*.keystore
+**/gradle.properties
