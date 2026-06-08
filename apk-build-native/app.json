@@ -12,12 +12,30 @@
       "backgroundColor": "#F8F5EF",
       "resizeMode": "contain"
     },
-    "platforms": ["android", "ios"],
+    "platforms": [
+      "android",
+      "ios"
+    ],
     "android": {
       "package": "com.sonman.customer",
       "softwareKeyboardLayoutMode": "resize"
     },
-    "plugins": ["expo-notifications"],
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Sonman to use the camera for barcode and camera search."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Sonman to use the microphone for voice search.",
+          "speechRecognitionPermission": "Allow Sonman to recognize speech for voice search."
+        }
+      ]
+    ],
     "extra": {
       "apiUrl": "https://underpass-dig-vessel.ngrok-free.dev",
       "paymentGateway": "upi",

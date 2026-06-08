@@ -1,0 +1,1060 @@
+import { StatusBar as ExpoStatusBar } from "expo-status-bar";
+import * as Linking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { UserProfile } from "@sonman/auth-service";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { NotificationHistoryScreen, NotificationSettingsScreen, usePushNotifications } from "@sonman/notifications-service";
+import { authService } from "./auth";
+import { createCustomerOrdersService, ORDER_STATUS_LABELS, type CustomerOrder } from "./orders";
+import { loadActiveProducts, type CustomerProduct as Product } from "./products";
+import { formatDeliveryDate, quoteDelivery } from "./delivery";
+import { addressText, createCustomerProfileService, initials, type AddressInput, type CustomerAddress } from "./profile";
+import {
+  Image,
+  Animated,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  Share,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  StatusBar,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from "@expo-google-fonts/inter";
+
+import {
+  Poppins_600SemiBold,
+  Poppins_700Bold,
+  Poppins_800ExtraBold,
+} from "@expo-google-fonts/poppins";
+type Screen =
+  | "splash"
+  | "onboarding"
+  | "login"
+  | "signup"
+  | "home"
+  | "categories"
+  | "listing"
+  | "details"
+  | "cart"
+  | "checkout"
+  | "payment-confirmation"
+  | "orders"
+  | "wishlist"
+  | "profile"
+  | "edit-profile"
+  | "addresses"
+  | "address-form"
+  | "help"
+  | "notifications"
+  | "notification-settings";
+
+const palette = {
+  cream: "#F5F7FB",
+  white: "#FFFFFF",
+  sand: "#EEF2F7",
+  line: "#E2E8F0",
+  black: "#0F172A",
+  muted: "#64748B",
+  gold: "#F59E0B",
+  goldPale: "#FEF3C7",
+  green: "#0F766E",
+  greenPale: "#DCFCE7",
+  red: "#EF4444",
+  blue: "#2563EB",
+  bluePale: "#DBEAFE",
+};
+
+const categories: ReadonlyArray<readonly [string, string, string, string]> = [
+  ["Electronics", "📱", "Mobiles, gadgets and accessories", "#DBEAFE"],
+  ["Fashion", "👕", "Clothing and daily style", "#FCE7F3"],
+  ["Dry Fruits", "🥜", "Kashmir pantry favourites", "#DCFCE7"],
+  ["Home", "🏠", "Home and kitchen essentials", "#FEF3C7"],
+  ["Beauty", "✨", "Beauty and personal care", "#F3E8FF"],
+  ["Handicrafts", "🧺", "Local artisan products", "#FFE4E6"],
+  ["Books", "📚", "Books and stationery", "#E0F2FE"],
+  ["More", "▦", "Explore every category", "#F1F5F9"],
+];
+const offers: ReadonlyArray<readonly [string, string, string, string]> = [
+  ["SONMAN LOCAL", "Fresh picks from Kulgam sellers", "Shop now", "#DBEAFE"],
+  ["DEALS NEAR YOU", "Daily essentials at better prices", "Explore", "#FEF3C7"],
+];
+const vendors: ReadonlyArray<readonly [string, string, string, string]> = [];
+const SERVICE_STATES = ["Jammu and Kashmir"];
+const SERVICE_DISTRICTS = ["Kulgam"];
+const premiumFont = "Poppins_700Bold";
+const bodyFont = "Inter_400Regular";
+const mediumFont = "Inter_600SemiBold";
+
+const money = (value: number) => `Rs ${value.toLocaleString("en-IN")}`;
+const discount = ({ price, oldPrice }: Product) =>
+  oldPrice ? Math.round(((oldPrice - price) / oldPrice) * 100) : 0;
+const filterProducts = (products: Product[], query: string) => {
+  const term = query.trim().toLowerCase();
+  return term ? products.filter((product) => [product.name, product.category, product.description].some((value) => value.toLowerCase().includes(term))) : products;
+};
+
+const BOTTOM_NAV_HEIGHT = 74;
+const MIN_ANDROID_BOTTOM_INSET = Platform.OS === "android" ? 36 : 0;
+const CHECKOUT_DISTANCE_KM = 0;
+const WISHLIST_STORAGE_KEY = "sonman.customer.wishlist";
+const SONMAN_UPI_ID = process.env.EXPO_PUBLIC_SONMAN_UPI_ID ?? "yourupi@bank";
+const PAYMENT_GATEWAY = process.env.EXPO_PUBLIC_PAYMENT_GATEWAY ?? "upi";
+WebBrowser.maybeCompleteAuthSession();
+
+const formatDateOfBirth = (value?: string | null) => {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+};
+
+const dateOfBirthParts = (value?: string | null) => {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return { day: match?.[3] ?? "", month: match?.[2] ?? "", year: match?.[1] ?? "" };
+};
+
+const normalizeDateOfBirth = (day: string, month: string, year: string) => {
+  if (!day && !month && !year) return "";
+  if (!/^\d{2}$/.test(day) || !/^\d{2}$/.test(month) || !/^\d{4}$/.test(year)) {
+    throw new Error("Enter date of birth as DD, MM, and YYYY.");
+  }
+  const candidate = new Date(`${year}-${month}-${day}T00:00:00`);
+  if (
+    Number.isNaN(candidate.getTime())
+    || candidate.getFullYear() !== Number(year)
+    || candidate.getMonth() + 1 !== Number(month)
+    || candidate.getDate() !== Number(day)
+  ) {
+    throw new Error("Enter a valid date of birth.");
+  }
+  return `${year}-${month}-${day}`;
+};
+
+export default function App() {
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Poppins_600SemiBold,
+    Poppins_700Bold,
+    Poppins_800ExtraBold,
+  });
+
+  const [screen, setScreen] = useState<Screen>("splash");
+  const [minimumSplashElapsed, setMinimumSplashElapsed] = useState(false);
+  const [launchReady, setLaunchReady] = useState(false);
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productsError, setProductsError] = useState("");
+  const [selected, setSelected] = useState<Product>();
+  const [category, setCategory] = useState("Trending");
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [orderError, setOrderError] = useState("");
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [profile, setProfile] = useState<UserProfile>();
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
+  const [editingAddress, setEditingAddress] = useState<CustomerAddress>();
+  const ordersService = useMemo(() => createCustomerOrdersService(authService.supabase), []);
+  const profileService = useMemo(() => createCustomerProfileService(authService.supabase), []);
+  const defaultAddress = addresses.find((address) => address.isDefault);
+  usePushNotifications(authService.supabase, authenticated, "customer");
+  const loadProfile = async () => {
+    const [nextProfile, nextAddresses] = await Promise.all([profileService.getProfile(), profileService.listAddresses()]);
+    setProfile(nextProfile);
+    setAddresses(nextAddresses);
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => setMinimumSplashElapsed(true), 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!minimumSplashElapsed || checkingSession) return;
+    Animated.timing(splashOpacity, { toValue: 0, duration: 450, useNativeDriver: true }).start(() => {
+      setScreen((current) => current === "splash" ? "onboarding" : current);
+      setLaunchReady(true);
+    });
+  }, [checkingSession, minimumSplashElapsed, splashOpacity]);
+
+  useEffect(() => {
+    const completeAuthCallback = (url: string) => {
+      if (!url.includes("auth/callback")) return;
+      void authService.completeOAuthLogin(url, "customer")
+        .then(() => {
+          setAuthenticated(true);
+          setScreen("home");
+        })
+        .catch(() => setScreen("login"));
+    };
+    void Linking.getInitialURL().then((url) => url && completeAuthCallback(url));
+    const subscription = Linking.addEventListener("url", ({ url }) => completeAuthCallback(url));
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    loadActiveProducts(authService.supabase)
+      .then(setProducts)
+      .catch((cause) => setProductsError(cause instanceof Error ? cause.message : "Products could not be loaded."));
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(WISHLIST_STORAGE_KEY)
+      .then((value) => setWishlist(value ? JSON.parse(value) as string[] : []))
+      .catch(() => setWishlist([]));
+  }, []);
+
+  useEffect(() => {
+    authService.restoreSession("customer")
+      .then((auth) => {
+        if (auth) {
+          setAuthenticated(true);
+          setScreen("home");
+        }
+      })
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingSession(false));
+    const subscription = authService.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    Promise.all([ordersService.loadCart(), ordersService.listOrders(), loadProfile()])
+      .then(([nextCart, nextOrders]) => {
+        setCart(nextCart);
+        setOrders(nextOrders);
+      })
+      .catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Ordering data could not be loaded."));
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    const channel = authService.supabase.channel("customer-order-lifecycle")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        void ordersService.listOrders()
+          .then(setOrders)
+          .catch((cause) => setOrderError(cause instanceof Error ? cause.message : "Orders could not be refreshed."));
+      })
+      .subscribe();
+    return () => { void authService.supabase.removeChannel(channel); };
+  }, [authenticated]);
+
+  const openListing = (nextCategory = "Trending") => {
+    setCategory(nextCategory);
+    setScreen("listing");
+  };
+  const openProduct = (product: Product) => {
+    setSelected(product);
+    setScreen("details");
+  };
+  const setCartQuantity = async (id: string, quantity: number) => {
+    const previous = cart;
+    setOrderError("");
+    setCart((current) => {
+      const next = { ...current };
+      if (quantity > 0) next[id] = quantity;
+      else delete next[id];
+      return next;
+    });
+    try {
+      if (!authenticated) return;
+      await ordersService.setCartItem(id, quantity);
+    } catch (cause) {
+      setCart(previous);
+      setOrderError(cause instanceof Error ? cause.message : "Cart could not be updated.");
+    }
+  };
+  const toggleCart = (id: string) => void setCartQuantity(id, cart[id] ? 0 : 1);
+  const toggleWishlist = (id: string) => {
+    setWishlist((current) => {
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      void AsyncStorage.setItem(WISHLIST_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+  const openUpiPayment = async () => {
+    setPlacingOrder(true);
+    setOrderError("");
+    try {
+      if (!authenticated) {
+        setScreen("login");
+        throw new Error("Sign in to place your order.");
+      }
+      if (!defaultAddress) throw new Error("Add a default delivery address before placing your order.");
+      if (PAYMENT_GATEWAY !== "upi") throw new Error("UPI payment is not enabled for this build.");
+      if (!SONMAN_UPI_ID || SONMAN_UPI_ID === "yourupi@bank") throw new Error("Sonman UPI ID is not configured.");
+      const totalAmount = subtotal + (deliveryQuote.fee ?? 0);
+      const params = new URLSearchParams({
+        pa: SONMAN_UPI_ID,
+        pn: "Sonman",
+        am: totalAmount.toFixed(2),
+        cu: "INR",
+        tn: "Sonman Order",
+      });
+      await Linking.openURL(`upi://pay?${params.toString()}`);
+      setScreen("payment-confirmation");
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "Payment could not be opened. Your order was not created.");
+    } finally {
+      setPlacingOrder(false);
+    }
+  };
+  const confirmUpiPayment = async (paymentReference?: string) => {
+    setPlacingOrder(true);
+    setOrderError("");
+    try {
+      if (!authenticated) {
+        setScreen("login");
+        throw new Error("Sign in to place your order.");
+      }
+      if (!defaultAddress) throw new Error("Add a default delivery address before placing your order.");
+      await ordersService.placeOrder({
+        id: defaultAddress.id,
+        label: defaultAddress.label,
+        recipient_name: defaultAddress.recipientName,
+        address: addressText(defaultAddress),
+      }, CHECKOUT_DISTANCE_KM, paymentReference);
+      setCart({});
+      setOrders(await ordersService.listOrders());
+      setOrderError("Order placed. Payment is pending verification.");
+      setScreen("orders");
+    } catch (cause) {
+      setOrderError(cause instanceof Error ? cause.message : "Order could not be created. Your cart is unchanged.");
+    } finally {
+      setPlacingOrder(false);
+    }
+  };
+  const cancelUpiPayment = () => {
+    setOrderError("Payment cancelled. Your cart is unchanged.");
+    setScreen("checkout");
+  };
+  const cartProducts = products.filter((product) => cart[product.id]);
+  const wishlistProducts = products.filter((product) => wishlist.includes(product.id));
+  const cartCount = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
+  const subtotal = cartProducts.reduce((sum, product) => sum + product.price * cart[product.id], 0);
+  const deliveryQuote = quoteDelivery(cartProducts, CHECKOUT_DISTANCE_KM);
+
+  if (!fontsLoaded || !launchReady) return <SafeLayout><Splash opacity={splashOpacity} /></SafeLayout>;
+  if (screen === "onboarding") return <SafeLayout><Onboarding onContinue={() => setScreen("home")} /></SafeLayout>;
+  if (screen === "login" || screen === "signup") {
+    return (
+      <SafeLayout>
+        <Auth
+          mode={screen}
+          onAuthenticated={() => {
+            setAuthenticated(true);
+            setScreen("home");
+          }}
+          onSwitch={() => setScreen(screen === "login" ? "signup" : "login")}
+        />
+      </SafeLayout>
+    );
+  }
+  return (
+    <SafeLayout>
+      {screen === "home" && <Home profile={profile} address={defaultAddress} products={products} productsError={productsError} wishlist={wishlist} onWishlist={toggleWishlist} onProfile={() => setScreen("profile")} onAddresses={() => setScreen("addresses")} onCategories={() => setScreen("categories")} onListing={openListing} onProduct={openProduct} />}
+      {screen === "categories" && <Categories onBack={() => setScreen("home")} onCategory={openListing} />}
+      {screen === "listing" && <Listing products={products} category={category} wishlist={wishlist} onWishlist={toggleWishlist} onBack={() => setScreen("home")} onProduct={openProduct} />}
+      {screen === "details" && selected && (
+        <Details
+          product={selected}
+          products={products}
+          inCart={!!cart[selected.id]}
+          saved={wishlist.includes(selected.id)}
+          onProduct={openProduct}
+          onBack={() => setScreen("listing")}
+          onCart={() => toggleCart(selected.id)}
+          onWishlist={() => toggleWishlist(selected.id)}
+          onBuy={() => {
+            if (!cart[selected.id]) toggleCart(selected.id);
+            setScreen("cart");
+          }}
+        />
+      )}
+      {screen === "cart" && <Cart items={cartProducts} savedItems={wishlistProducts} products={products} quantities={cart} subtotal={subtotal} error={orderError} onQuantity={setCartQuantity} onSaveLater={(id) => { if (!wishlist.includes(id)) toggleWishlist(id); void setCartQuantity(id, 0); }} onProduct={openProduct} onCheckout={() => setScreen("checkout")} />}
+      {screen === "checkout" && <Checkout address={defaultAddress} items={cartProducts} quantities={cart} subtotal={subtotal} quote={deliveryQuote} busy={placingOrder} error={orderError} onBack={() => setScreen("cart")} onAddresses={() => setScreen("addresses")} onPlaceOrder={openUpiPayment} />}
+      {screen === "payment-confirmation" && <PaymentConfirmation total={subtotal + (deliveryQuote.fee ?? 0)} busy={placingOrder} error={orderError} onPaid={confirmUpiPayment} onFailed={cancelUpiPayment} />}
+      {screen === "orders" && <Orders orders={orders} error={orderError} />}
+      {screen === "wishlist" && <Wishlist items={wishlistProducts} wishlist={wishlist} onBack={() => setScreen("profile")} onWishlist={toggleWishlist} onProduct={openProduct} />}
+      {screen === "profile" && (authenticated ? <Profile profile={profile} wishlistCount={wishlist.length} onEdit={() => setScreen("edit-profile")} onOrders={() => setScreen("orders")} onWishlist={() => setScreen("wishlist")} onAddresses={() => setScreen("addresses")} onHelp={() => setScreen("help")} onNotifications={() => setScreen("notifications")} onNotificationSettings={() => setScreen("notification-settings")} onLogout={async () => { await authService.logout(); setScreen("login"); }} /> : <Auth mode="login" onAuthenticated={() => { setAuthenticated(true); setScreen("home"); }} onSwitch={() => setScreen("signup")} />)}
+      {screen === "edit-profile" && profile && <EditProfile profile={profile} onBack={() => setScreen("profile")} onSaved={(next) => { setProfile(next); setScreen("profile"); }} />}
+      {screen === "addresses" && <Addresses addresses={addresses} onBack={() => setScreen("profile")} onAdd={() => { setEditingAddress(undefined); setScreen("address-form"); }} onEdit={(address) => { setEditingAddress(address); setScreen("address-form"); }} onDelete={async (id) => { await profileService.deleteAddress(id); await loadProfile(); }} onDefault={async (id) => { await profileService.setDefaultAddress(id); await loadProfile(); }} />}
+      {screen === "address-form" && <AddressForm address={editingAddress} onBack={() => setScreen("addresses")} onSaved={async () => { await loadProfile(); setScreen("addresses"); }} />}
+      {screen === "help" && <HelpCenter onBack={() => setScreen("profile")} />}
+      {screen === "notifications" && <NotificationHistoryScreen supabase={authService.supabase} onBack={() => setScreen("profile")} />}
+      {screen === "notification-settings" && <NotificationSettingsScreen supabase={authService.supabase} app="customer" onBack={() => setScreen("profile")} />}
+      <BottomNav screen={screen} count={cartCount} onNavigate={setScreen} />
+    </SafeLayout>
+  );
+}
+
+function Splash({ opacity }: { opacity: Animated.Value }) {
+  const letters = ["s", "so", "son", "sonm", "sonma", "sonman"];
+  const [word, setWord] = useState("s");
+  useEffect(() => {
+    const timers = letters.map((item, index) => setTimeout(() => setWord(item), 170 * index));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+  return (
+    <Animated.View style={[styles.splashFade, { opacity }]}> 
+      <View style={styles.splashClean}>
+        <View style={styles.splashGlowOne} />
+        <View style={styles.splashGlowTwo} />
+        <View style={styles.splashLogoBox}><Text style={styles.splashLogoS}>S</Text></View>
+        <Text style={styles.splashWord}>{word}</Text>
+        <Text style={styles.splashLine}>Kashmir's local marketplace</Text>
+        <Text style={styles.splashSubLine}>Shop local. Deliver smarter.</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+function Onboarding({ onContinue }: { onContinue: () => void }) {
+  return (
+    <ScreenShell contentContainerStyle={styles.onboarding}>
+        <View style={styles.between}><Text style={styles.logo}>sonman</Text><Text style={styles.link} onPress={onContinue}>Skip</Text></View>
+        <View style={styles.onboardingVisual}>
+          <View style={styles.floatingNote}><Text style={styles.gold}>AI</Text><Text style={styles.noteText}>Picks tailored to your taste</Text></View>
+        </View>
+        <View>
+          <Text style={styles.onboardingTitle}>Better finds.{"\n"}Less searching.</Text>
+          <Text style={styles.body}>Discover standout products, useful deals, and personal picks in one clean marketplace.</Text>
+        </View>
+        <PrimaryButton label="Start shopping" onPress={onContinue} />
+        <Text style={styles.dots}>●  ○  ○</Text>
+    </ScreenShell>
+  );
+}
+
+function Auth({ mode, onAuthenticated, onSwitch }: { mode: "login" | "signup"; onAuthenticated: () => void; onSwitch: () => void }) {
+  const signup = mode === "signup";
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      if (signup) {
+        const result = await authService.register({ email, password, fullName, role: "customer", emailRedirectTo: Linking.createURL("auth/callback") });
+        if (!result.session) {
+          setError("Check your email to confirm your account, then sign in.");
+          return;
+        }
+        await authService.restoreSession("customer");
+      } else {
+        await authService.login(email, password, "customer");
+      }
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const google = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const redirectTo = Linking.createURL("auth/callback");
+      const url = await authService.beginGoogleLogin(redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(url, redirectTo);
+      if (result.type !== "success") {
+        if (result.type !== "cancel") setError("Google sign in was not completed.");
+        return;
+      }
+      await authService.completeOAuthLogin(result.url, "customer");
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Google sign in failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <ScreenShell contentContainerStyle={styles.auth}>
+        <Text style={styles.logo}>sonman</Text>
+        <View style={styles.authIntro}>
+          <Text style={styles.authTitle}>{signup ? "Create your account" : "Welcome back"}</Text>
+          <Text style={styles.body}>{signup ? "Save picks, track orders, and checkout faster." : "Sign in to continue your shopping journey."}</Text>
+        </View>
+        <PrimaryButton label={busy ? "Please wait..." : "Continue with Google"} onPress={google} disabled={busy} />
+        <Text style={styles.authDivider}>OR CONTINUE WITH EMAIL</Text>
+        {signup && <Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} />}
+        <Field label="Email address" placeholder="name@example.com" value={email} onChange={setEmail} />
+        <Field label="Password" placeholder="Enter password" secure value={password} onChange={setPassword} />
+        {!!error && <Text style={styles.authError}>{error}</Text>}
+        {!signup && <Text style={[styles.link, styles.alignRight]}>Forgot password?</Text>}
+        <PrimaryButton label={busy ? "Please wait..." : signup ? "Create account" : "Sign in"} onPress={submit} disabled={busy} />
+        <Pressable onPress={onSwitch}><Text style={styles.switchText}>{signup ? "Already have an account? " : "New to Sonman? "}<Text style={styles.link}>{signup ? "Sign in" : "Create account"}</Text></Text></Pressable>
+    </ScreenShell>
+  );
+}
+
+function Home({ profile, address, products, productsError, wishlist, onWishlist, onProfile, onAddresses, onCategories, onListing, onProduct }: { profile?: UserProfile; address?: CustomerAddress; products: Product[]; productsError: string; wishlist: string[]; onWishlist: (id: string) => void; onProfile: () => void; onAddresses: () => void; onCategories: () => void; onListing: (category?: string) => void; onProduct: (product: Product) => void }) {
+  const { width } = useWindowDimensions();
+  const [query, setQuery] = useState("");
+  const contentWidth = width - 24;
+  const cardWidth = Math.floor((contentWidth - 10) / 2);
+  const visible = filterProducts(products, query);
+  return (
+    <ScreenShell contentContainerStyle={styles.homeScreen}>
+      <View style={styles.appTopBar}>
+        <Pressable style={styles.locationMini} onPress={onAddresses}>
+          <Text style={styles.pinIcon}>⌖</Text>
+          <View>
+            <Text style={styles.deliverSmall}>{address ? `Deliver to ${address.postalCode}` : "Add delivery location"}</Text>
+            <Text style={styles.deliverText} numberOfLines={1}>{address ? addressText(address) : "Kulgam, Jammu and Kashmir"}</Text>
+          </View>
+        </Pressable>
+        <Pressable style={styles.profileIconBtn} onPress={onProfile}><Text style={styles.profileMiniText}>{initials(profile?.full_name ?? "") || "You"}</Text></Pressable>
+      </View>
+      <SearchBar value={query} onChange={setQuery} suggestions={products.map((product) => product.name)} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickCategoryRail}>
+        {categories.map(([name, icon, , color]) => (
+          <Pressable key={name} style={styles.quickCategory} onPress={() => name === "More" ? onCategories() : onListing(name)}>
+            <View style={[styles.quickCategoryIcon, { backgroundColor: color }]}><Text style={styles.quickCategoryEmoji}>{icon}</Text></View>
+            <Text style={styles.quickCategoryText} numberOfLines={2}>{name}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} pagingEnabled contentContainerStyle={styles.bannerRail}>
+        {offers.map(([kicker, title, action, color], index) => (
+          <Pressable key={title} style={[styles.bigBanner, { width: contentWidth, backgroundColor: color }]} onPress={() => onListing()}>
+            <View style={styles.bannerContent}>
+              <Text style={styles.bannerKicker}>{kicker}</Text>
+              <Text style={styles.bannerTitle}>{title}</Text>
+              <Text style={styles.bannerAction}>{action} ›</Text>
+            </View>
+            {!!visible[index]?.image && <Image source={{ uri: visible[index].image }} style={styles.bannerProductImage} />}
+          </Pressable>
+        ))}
+      </ScrollView>
+      <View style={styles.serviceStrip}>
+        <Text style={styles.serviceItem}>🚚 Free delivery offers</Text>
+        <Text style={styles.serviceItem}>🔁 Easy replacement</Text>
+        <Text style={styles.serviceItem}>🔒 Secure prepaid</Text>
+      </View>
+      <SectionHeader title="Trending near you" action="See all" onPress={() => onListing("Trending")} />
+      <View style={styles.productGrid}>{visible.slice(0, 6).map((product) => <ProductCard key={product.id} product={product} width={cardWidth} saved={wishlist.includes(product.id)} onWishlist={() => onWishlist(product.id)} onPress={() => onProduct(product)} />)}</View>
+      {!visible.length && <Empty title={productsError ? "Products unavailable" : query ? "No matching products" : "No products yet"} subtitle={productsError || (query ? "Try another search term." : "Approved products will appear here.")} />}
+      <SectionHeader title="Flash deals" action="See all" onPress={() => onListing("Deals")} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{visible.slice(0, 8).map((product) => <CompactProduct key={`deal-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</ScrollView>
+      <SectionHeader title="Top sellers" action="See all" onPress={() => onListing("Top sellers")} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{[...visible].sort((a, b) => b.reviews - a.reviews).slice(0, 8).map((product) => <CompactProduct key={`top-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</ScrollView>
+      <SectionHeader title="New arrivals" action="See all" onPress={() => onListing("New arrivals")} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{visible.slice(0, 8).map((product) => <CompactProduct key={`new-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</ScrollView>
+      {!!vendors.length && <><SectionHeader title="Local stores" action="Explore" onPress={() => onListing("Local stores")} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.vendorRail}>{vendors.map(([name, icon, rating, color]) => <VendorCard key={name} name={name} icon={icon} rating={rating} color={color} />)}</ScrollView></>}
+      <SectionHeader title="Recommended for you" action="View all" onPress={() => onListing("Recommended")} />
+      <View style={styles.productGrid}>{[...visible].reverse().slice(0, 6).map((product) => <ProductCard key={`more-${product.id}`} product={product} width={cardWidth} saved={wishlist.includes(product.id)} onWishlist={() => onWishlist(product.id)} onPress={() => onProduct(product)} />)}</View>
+    </ScreenShell>
+  );
+}
+
+function Categories({ onBack, onCategory }: { onBack: () => void; onCategory: (category: string) => void }) {
+  return (
+    <ScreenScroll sticky>
+      <PageHeader title="Categories" onBack={onBack} />
+      <SearchBar placeholder="Search categories" />
+      <Text style={styles.body}>Explore every corner of Sonman.</Text>
+      <View style={styles.categoryList}>
+        {categories.map(([name, icon, subtitle], index) => (
+          <Pressable key={name} style={styles.categoryRow} onPress={() => onCategory(name)}>
+            <View style={[styles.categoryLargeIcon, index === 0 && styles.categoryLargeIconGold]}><Text style={styles.categoryLargeText}>{icon}</Text></View>
+            <View style={styles.flex}><Text style={styles.rowTitle}>{name}</Text><Text style={styles.smallMuted}>{subtitle}</Text></View>
+            <Text style={styles.arrow}>›</Text>
+          </Pressable>
+        ))}
+      </View>
+    </ScreenScroll>
+  );
+}
+
+function Listing({ products, category, wishlist, onWishlist, onBack, onProduct }: { products: Product[]; category: string; wishlist: string[]; onWishlist: (id: string) => void; onBack: () => void; onProduct: (product: Product) => void }) {
+  const { width } = useWindowDimensions();
+  const [query, setQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [popular, setPopular] = useState(false);
+  const [fastDelivery, setFastDelivery] = useState(false);
+  const [topRated, setTopRated] = useState(false);
+  const contentWidth = width - (width < 360 ? 24 : 28);
+  const cardWidth = Math.floor((contentWidth - 10) / 2);
+  const inCategory = categories.some(([name]) => name === category) ? products.filter((product) => product.category === category) : products;
+  const visible = filterProducts(inCategory, query)
+    .filter((product) => !fastDelivery || product.deliverySize === "small")
+    .sort((a, b) => topRated ? b.rating - a.rating : popular ? (b.reviews - a.reviews || b.rating - a.rating) : 0);
+  const chips = [
+    ["Filters", showFilters, () => setShowFilters((current) => !current)],
+    ["Popular", popular, () => setPopular((current) => !current)],
+    ["Fast delivery", fastDelivery, () => setFastDelivery((current) => !current)],
+    ["Top rated", topRated, () => setTopRated((current) => !current)],
+  ] as const;
+  return (
+    <ScreenScroll sticky>
+      <PageHeader title={category} onBack={onBack} />
+      <SearchBar placeholder={`Search ${category.toLowerCase()}`} value={query} onChange={setQuery} suggestions={products.map((product) => product.name)} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
+        {chips.map(([item, active, onPress]) => <Pressable key={item} style={[styles.filter, active && styles.filterActive]} onPress={onPress}><Text style={[styles.filterText, active && styles.filterTextActive]}>{item}</Text></Pressable>)}
+      </ScrollView>
+      {showFilters && <View style={styles.filterPanel}><Text style={styles.rowTitle}>Delivery speed</Text><Text style={styles.smallMuted}>Fast delivery shows small products suitable for standard local delivery.</Text><View style={styles.filterPanelActions}><Text style={styles.link} onPress={() => { setPopular(false); setFastDelivery(false); setTopRated(false); }}>Reset</Text><Text style={styles.link} onPress={() => setShowFilters(false)}>Done</Text></View></View>}
+      <View style={styles.between}><Text style={styles.smallMuted}>{visible.length} curated products</Text><Text style={styles.smallMuted}>Grid view</Text></View>
+      <View style={[styles.productGrid, styles.gridTop]}>{visible.map((product) => <ProductCard key={product.id} product={product} width={cardWidth} saved={wishlist.includes(product.id)} onWishlist={() => onWishlist(product.id)} onPress={() => onProduct(product)} />)}</View>
+      {!visible.length && <Empty title="No products found" subtitle="Active products in this collection will appear here." />}
+    </ScreenScroll>
+  );
+}
+
+function Details({ product, products, inCart, saved, onBack, onCart, onWishlist, onBuy, onProduct }: { product: Product; products: Product[]; inCart: boolean; saved: boolean; onBack: () => void; onCart: () => void; onWishlist: () => void; onBuy: () => void; onProduct: (product: Product) => void }) {
+  const { width } = useWindowDimensions();
+  const carouselWidth = width - 28;
+  const images = product.images.length ? product.images : [product.image];
+  const [imageIndex, setImageIndex] = useState(0);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [variant, setVariant] = useState(product.variants[0] ?? "");
+  const [pincode, setPincode] = useState("");
+  const [deliveryMessage, setDeliveryMessage] = useState("");
+  const similar = products.filter((item) => item.id !== product.id && item.category === product.category).slice(0, 8);
+  const onImageScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) =>
+    setImageIndex(Math.round(event.nativeEvent.contentOffset.x / carouselWidth));
+  return (
+    <ScreenScroll>
+      <PageHeader title="Product details" onBack={onBack} action="SHARE" onAction={() => void Share.share({ message: `${product.name} - ${money(product.price)} on Sonman` })} />
+      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={onImageScroll}>
+        {images.map((image, index) => <Pressable key={`${image}-${index}`} onPress={() => setViewerOpen(true)}><Image source={{ uri: image }} style={[styles.detailImage, { width: carouselWidth }]} /></Pressable>)}
+      </ScrollView>
+      <Text style={styles.imageCounter}>{imageIndex + 1} / {images.length} · Tap image to expand</Text>
+      <Text style={styles.eyebrow}>{product.category.toUpperCase()}</Text>
+      <Text style={styles.detailTitle}>{product.name}</Text>
+      <View style={styles.ratingLine}><Text style={styles.rating}>★ {product.rating}</Text><Text style={styles.smallMuted}>{product.reviews} verified reviews</Text></View>
+      <View style={styles.priceLine}><Text style={styles.detailPrice}>{money(product.price)}</Text><Text style={styles.oldPrice}>{money(product.oldPrice)}</Text><Text style={styles.discount}>{discount(product)}% off</Text></View>
+      <View style={styles.deliveryCard}><Text style={styles.deliveryIcon}>DEL</Text><View><Text style={styles.deliveryTitle}>{product.deliverySize === "large" || product.deliverySize === "heavy" ? "Delivery charge will be confirmed by Sonman before dispatch." : "Standard delivery available"}</Text><Text style={styles.smallMuted}>No same-day delivery</Text></View></View>
+      <Text style={styles.sectionTitle}>About this product</Text>
+      <Text style={styles.body}>{product.description}</Text>
+      {!!product.variants.length && <><Text style={[styles.sectionTitle, styles.sectionSpacing]}>Choose an option</Text><View style={styles.sizeRow}>{product.variants.map((option) => <Pressable key={option} style={[styles.size, variant === option && styles.sizeActive]} onPress={() => setVariant(option)}><Text style={[styles.sizeText, variant === option && styles.sizeTextActive]}>{option}</Text></Pressable>)}</View></>}
+      <View style={styles.infoCard}><Text style={styles.rowTitle}>Delivery availability</Text><Text style={styles.smallMuted}>Enter your pincode to confirm delivery options.</Text><View style={styles.pincodeRow}><TextInput style={styles.pincodeInput} value={pincode} onChangeText={(value) => setPincode(value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit pincode" placeholderTextColor={palette.muted} keyboardType="number-pad" /><Text style={styles.link} onPress={() => setDeliveryMessage(pincode.length === 6 ? "Delivery is available. Final estimate is shown at checkout." : "Enter a valid 6-digit pincode.")}>Check</Text></View>{!!deliveryMessage && <Text style={styles.green}>{deliveryMessage}</Text>}</View>
+      <View style={styles.infoCard}><Text style={styles.rowTitle}>Seller information</Text><Text style={styles.smallMuted}>Verified local Sonman seller · Seller ID {product.vendorId.slice(0, 8).toUpperCase()}</Text></View>
+      <View style={styles.infoCard}><Text style={styles.rowTitle}>Specifications</Text><Text style={styles.smallMuted}>Category: {product.category || "General"}</Text><Text style={styles.smallMuted}>Shipping class: {product.deliverySize}</Text><Text style={styles.smallMuted}>Fulfilment: Sonman local delivery</Text></View>
+      <View style={styles.infoCard}><Text style={styles.rowTitle}>Ratings and reviews</Text><Text style={styles.detailPrice}>{product.rating || "New"}</Text><Text style={styles.smallMuted}>{product.reviews ? `${product.reviews} verified customer reviews` : "Be the first customer to review this product."}</Text></View>
+      {!!similar.length && <><SectionHeader title="Similar products" action="Explore" onPress={() => onProduct(similar[0])} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{similar.map((item) => <CompactProduct key={item.id} product={item} onPress={() => onProduct(item)} />)}</ScrollView></>}
+      <View style={styles.actionRow}><Pressable style={styles.outlineButton} onPress={onCart}><Text style={styles.outlineText}>{inCart ? "Remove" : "Add to cart"}</Text></Pressable><Pressable style={styles.darkButton} onPress={onBuy}><Text style={styles.darkButtonText}>Buy now</Text></Pressable></View>
+      <Text style={styles.saveDetail} onPress={onWishlist}>{saved ? "♥ Saved to wishlist" : "♡ Save to wishlist"}</Text>
+      <FullscreenImageViewer images={images} initialIndex={imageIndex} visible={viewerOpen} onClose={() => setViewerOpen(false)} />
+    </ScreenScroll>
+  );
+}
+
+function FullscreenImageViewer({ images, initialIndex, visible, onClose }: { images: string[]; initialIndex: number; visible: boolean; onClose: () => void }) {
+  const { width } = useWindowDimensions();
+  const [index, setIndex] = useState(initialIndex);
+  const [scale, setScale] = useState(1);
+  const distance = useRef(0);
+  useEffect(() => { if (visible) { setIndex(initialIndex); setScale(1); } }, [initialIndex, visible]);
+  const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) => touches.length < 2 ? 0 : Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+  return <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={onClose}><View style={styles.viewer}><View style={styles.viewerHeader}><Text style={styles.viewerCounter}>{index + 1} / {images.length}</Text><Text style={styles.viewerClose} onPress={onClose}>Close</Text></View><ScrollView horizontal pagingEnabled={scale === 1} scrollEnabled={scale === 1} showsHorizontalScrollIndicator={false} contentOffset={{ x: initialIndex * width, y: 0 }} onMomentumScrollEnd={(event) => { setIndex(Math.round(event.nativeEvent.contentOffset.x / width)); setScale(1); }}>{images.map((image, imageIndex) => <View key={`${image}-${imageIndex}`} style={[styles.viewerSlide, { width }]} onTouchStart={(event) => { distance.current = touchDistance(event.nativeEvent.touches); }} onTouchMove={(event) => { const nextDistance = touchDistance(event.nativeEvent.touches); if (distance.current && nextDistance) setScale(Math.max(1, Math.min(4, scale * nextDistance / distance.current))); distance.current = nextDistance; }} onTouchEnd={() => { distance.current = 0; }}><Image source={{ uri: image }} resizeMode="contain" style={[styles.viewerImage, { transform: [{ scale: imageIndex === index ? scale : 1 }] }]} /></View>)}</ScrollView><Text style={styles.viewerHint}>Swipe for more images · Pinch to zoom</Text></View></Modal>;
+}
+
+function Cart({ items, savedItems, products, quantities, subtotal, error, onQuantity, onSaveLater, onProduct, onCheckout }: { items: Product[]; savedItems: Product[]; products: Product[]; quantities: Record<string, number>; subtotal: number; error: string; onQuantity: (id: string, quantity: number) => void; onSaveLater: (id: string) => void; onProduct: (product: Product) => void; onCheckout: () => void }) {
+  const freeDeliveryTarget = 499;
+  const progress = Math.min(100, Math.round(subtotal / freeDeliveryTarget * 100));
+  const recommended = products.filter((product) => !quantities[product.id]).slice(0, 8);
+  return (
+    <ScreenScroll>
+      <Text style={styles.pageTitle}>Your cart</Text>
+      <Text style={styles.body}>{items.length} items ready for checkout</Text>
+      <View style={styles.deliveryBanner}><Text style={styles.deliveryIcon}>DEL</Text><View style={styles.flex}><Text style={styles.deliveryTitle}>{subtotal >= freeDeliveryTarget ? "You unlocked free delivery offers" : `Add ${money(freeDeliveryTarget - subtotal)} more for free delivery offers`}</Text><View style={styles.deliveryProgress}><View style={[styles.deliveryProgressDone, { width: `${progress}%` }]} /></View></View></View>
+      {items.map((product) => <CartItem key={product.id} product={product} quantity={quantities[product.id]} onQuantity={(quantity) => onQuantity(product.id, quantity)} onSaveLater={() => onSaveLater(product.id)} />)}
+      {!items.length && <Empty title="Your cart is empty" subtitle="Add a few favourites and they will appear here." />}
+      <View style={styles.couponCard}><Text style={styles.rowTitle}>Apply coupon</Text><Text style={styles.smallMuted}>Check available Sonman offers at checkout.</Text><Text style={styles.link}>View coupons ›</Text></View>
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      <OrderTotal subtotal={subtotal} />
+      {!!savedItems.length && <><SectionHeader title="Saved for later" action={`${savedItems.length} items`} onPress={() => undefined} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{savedItems.map((product) => <CompactProduct key={`saved-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</ScrollView></>}
+      {!!recommended.length && <><SectionHeader title="Recommended products" action="Explore" onPress={() => undefined} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.compactRail}>{recommended.map((product) => <CompactProduct key={`recommended-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</ScrollView></>}
+      <PrimaryButton label={`Checkout  ·  ${money(subtotal)}`} onPress={onCheckout} disabled={!items.length} />
+    </ScreenScroll>
+  );
+}
+
+function Checkout({ address, items, quantities, subtotal, quote, busy, error, onBack, onAddresses, onPlaceOrder }: { address?: CustomerAddress; items: Product[]; quantities: Record<string, number>; subtotal: number; quote: ReturnType<typeof quoteDelivery>; busy: boolean; error: string; onBack: () => void; onAddresses: () => void; onPlaceOrder: () => void }) {
+  const [policyAccepted, setPolicyAccepted] = useState(false);
+  const [deliverySlot, setDeliverySlot] = useState("Standard");
+  const [coupon, setCoupon] = useState("");
+  const [notes, setNotes] = useState("");
+  const payableAmount = subtotal + (quote.fee ?? 0);
+  return (
+    <ScreenScroll>
+      <PageHeader title="Checkout" onBack={onBack} />
+      <CheckoutSection icon="PIN" title="Delivery address" action={address ? "Change" : "Add"} onAction={onAddresses}><Text style={styles.rowTitle}>{address?.recipientName ?? "No default address selected"}</Text><Text style={styles.smallMuted}>{address ? addressText(address) : "Add a saved address before placing your order."}</Text></CheckoutSection>
+      <View style={styles.checkoutCard}><Text style={styles.rowTitle}>Product summary</Text>{items.map((product) => <View key={product.id} style={styles.checkoutProduct}><Image source={{ uri: product.image }} style={styles.checkoutProductImage} /><View style={styles.flex}><Text style={styles.rowTitle} numberOfLines={2}>{product.name}</Text><Text style={styles.smallMuted}>Qty {quantities[product.id]} · Local seller</Text><Text style={styles.productPrice}>{money(product.price * quantities[product.id])}</Text></View></View>)}</View>
+      <CheckoutSection icon="BOX" title="Delivery slot" action={`Zone ${quote.zone}`}><View style={styles.optionRow}>{["Standard", "Evening"].map((slot) => <Text key={slot} style={[styles.optionPill, deliverySlot === slot && styles.optionPillActive]} onPress={() => setDeliverySlot(slot)}>{slot}</Text>)}</View><Text style={styles.smallMuted}>Expected by {formatDeliveryDate(quote.expectedDate)}</Text><Text style={styles.smallMuted}>{quote.fee === null ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(quote.fee)}`}</Text></CheckoutSection>
+      <CheckoutSection icon="OFF" title="Coupon" action="Apply"><TextInput style={styles.inlineInput} value={coupon} onChangeText={setCoupon} placeholder="Enter coupon code" placeholderTextColor={palette.muted} /></CheckoutSection>
+      <CheckoutSection icon="PAY" title="Payment method" action="UPI"><View style={styles.upiPanel}><View style={styles.upiBrand}><View style={styles.upiMark}><Text style={styles.upiMarkText}>UPI</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>UPI Payment</Text><Text style={styles.smallMuted}>Pay through any installed UPI app</Text></View></View><Text style={styles.paymentAmount}>{money(payableAmount)}</Text><View style={styles.paymentOptions}>{["Google Pay", "PhonePe", "BHIM", "Other UPI"].map((method) => <Text key={method} style={styles.paymentOption}>{method}</Text>)}</View><Text style={styles.paymentAssurance}>You will pay inside your installed UPI app. Sonman will verify the payment before processing the order.</Text></View></CheckoutSection>
+      <CheckoutSection icon="NOTE" title="Order notes" action="Optional"><TextInput style={[styles.inlineInput, styles.notesInput]} value={notes} onChangeText={setNotes} placeholder="Delivery instructions or landmark" placeholderTextColor={palette.muted} multiline /></CheckoutSection>
+      <OrderTotal subtotal={subtotal} deliveryFee={quote.fee} />
+      <View style={styles.trustRow}><Text style={styles.trustBadge}>SECURE{"\n"}Payment</Text><Text style={styles.trustBadge}>EASY{"\n"}Replacement</Text><Text style={styles.trustBadge}>VERIFIED{"\n"}Local seller</Text></View>
+      <Pressable style={styles.policyRow} onPress={() => setPolicyAccepted((accepted) => !accepted)}>
+        <View style={[styles.checkbox, policyAccepted && styles.checkboxChecked]}><Text style={styles.checkboxMark}>{policyAccepted ? "✓" : ""}</Text></View>
+        <Text style={styles.policyText}>I understand this order is prepaid. Cancellation is not allowed after order confirmation. Replacement is allowed only for damaged, defective, or incorrect products reported at delivery.</Text>
+      </Pressable>
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      <PrimaryButton label={busy ? "Opening UPI..." : `Place order  ·  ${money(payableAmount)}`} onPress={onPlaceOrder} disabled={busy || !subtotal || !policyAccepted || !address} />
+    </ScreenScroll>
+  );
+}
+
+function PaymentConfirmation({ total, busy, error, onPaid, onFailed }: { total: number; busy: boolean; error: string; onPaid: (paymentReference?: string) => void; onFailed: () => void }) {
+  const [paymentReference, setPaymentReference] = useState("");
+  return (
+    <ScreenScroll>
+      <Text style={styles.pageTitle}>Did you complete payment?</Text>
+      <Text style={styles.body}>Confirm the UPI payment result for this order.</Text>
+      <View style={styles.checkoutCard}>
+        <Text style={styles.rowTitle}>UPI Payment</Text>
+        <Text style={styles.paymentAmount}>{money(total)}</Text>
+        <Text style={styles.smallMuted}>Use the buttons below after returning from your UPI app.</Text>
+        <Text style={styles.paymentAssurance}>Your order will be marked pending verification until Sonman confirms the UPI payment.</Text>
+      </View>
+      <TextInput style={styles.inlineInput} value={paymentReference} onChangeText={setPaymentReference} placeholder="Payment reference (optional)" placeholderTextColor={palette.muted} />
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      <PrimaryButton label={busy ? "Creating order..." : "I have paid"} onPress={() => onPaid(paymentReference)} disabled={busy} />
+      <Pressable style={styles.secondaryButton} onPress={onFailed} disabled={busy}>
+        <Text style={styles.secondaryButtonText}>Payment failed</Text>
+      </Pressable>
+    </ScreenScroll>
+  );
+}
+
+function Orders({ orders, error }: { orders: CustomerOrder[]; error: string }) {
+  const [tab, setTab] = useState<"active" | "past">("active");
+  const visible = orders.filter((order) => tab === "past" ? order.status === "delivered" : order.status !== "delivered");
+  return (
+    <ScreenScroll>
+      <Text style={styles.pageTitle}>Your orders</Text>
+      <Text style={styles.body}>Track deliveries and revisit past purchases.</Text>
+      <View style={styles.tabs}><Text style={tab === "active" ? styles.tabActive : styles.tab} onPress={() => setTab("active")}>Active</Text><Text style={tab === "past" ? styles.tabActive : styles.tab} onPress={() => setTab("past")}>Past orders</Text></View>
+      {!!error && <Text style={styles.authError}>{error}</Text>}
+      {visible.map((order) => <View key={order.id} style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{order.orderNumber}</Text><Text style={order.status === "delivered" ? styles.statusDelivered : styles.statusActive}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{order.items.map((item) => `${item.quantity} x ${item.name}`).join(", ")}</Text><Text style={styles.totalPrice}>{money(order.total)}</Text><Text style={styles.smallMuted}>Expected by {order.expectedDeliveryDate}</Text><Text style={styles.smallMuted}>{order.deliveryQuoteRequired ? "Delivery charge will be confirmed by Sonman before dispatch." : `Delivery charge: ${money(order.deliveryFee)}`}</Text><Text style={styles.policyLabel}>Prepaid order</Text><Text style={styles.smallMuted}>Replacement only if issue reported at delivery</Text></View>)}
+      {!visible.length && <Empty title={tab === "past" ? "No past orders" : "No active orders"} subtitle={tab === "past" ? "Delivered orders will appear here." : "New orders will appear here after checkout."} />}
+    </ScreenScroll>
+  );
+}
+
+function Wishlist({ items, wishlist, onBack, onWishlist, onProduct }: { items: Product[]; wishlist: string[]; onBack: () => void; onWishlist: (id: string) => void; onProduct: (product: Product) => void }) {
+  const { width } = useWindowDimensions();
+  const cardWidth = Math.floor((width - 38) / 2);
+  return <ScreenScroll><PageHeader title="Wishlist" onBack={onBack} /><Text style={styles.body}>{items.length} saved {items.length === 1 ? "item" : "items"}</Text><View style={[styles.productGrid, styles.gridTop]}>{items.map((product) => <ProductCard key={product.id} product={product} width={cardWidth} saved={wishlist.includes(product.id)} onWishlist={() => onWishlist(product.id)} onPress={() => onProduct(product)} />)}</View>{!items.length && <Empty title="Your wishlist is empty" subtitle="Tap a heart to save products for later." />}</ScreenScroll>;
+}
+
+function Profile({ profile, wishlistCount, onEdit, onOrders, onWishlist, onAddresses, onHelp, onNotifications, onNotificationSettings, onLogout }: { profile?: UserProfile; wishlistCount: number; onEdit: () => void; onOrders: () => void; onWishlist: () => void; onAddresses: () => void; onHelp: () => void; onNotifications: () => void; onNotificationSettings: () => void; onLogout: () => void }) {
+  const [avatarColor, setAvatarColor] = useState(palette.black);
+  const changeAvatar = () => setAvatarColor((current) => current === palette.black ? palette.blue : current === palette.blue ? palette.green : palette.black);
+  return (
+    <ScreenScroll>
+      <Text style={styles.pageTitle}>Your profile</Text>
+      <Pressable style={styles.profileCard} onPress={onEdit}><View style={[styles.avatar, { backgroundColor: avatarColor }]}><Text style={styles.avatarText}>{initials(profile?.full_name ?? "")}</Text></View><View style={styles.flex}><Text style={styles.profileName}>{profile?.full_name || "Customer"}</Text><Text style={styles.smallMuted}>{profile?.email ?? ""}</Text><Text style={styles.link}>Edit profile</Text></View><Text style={styles.arrow}>›</Text></Pressable>
+      <Text style={styles.changeAvatar} onPress={changeAvatar}>Change avatar style</Text>
+      <View style={styles.profileDetailsCard}>
+        <ProfileDetail label="Mobile" value={profile?.phone || "Add number"} />
+        <ProfileDetail label="Gender" value={profile?.gender || "Add gender"} />
+        <ProfileDetail label="Date of birth" value={formatDateOfBirth(profile?.date_of_birth) || "Add date"} last />
+      </View>
+      <Text style={styles.profileLabel}>ACCOUNT</Text>
+      <View style={styles.profileMenuCard}><ProfileRow icon="BOX" title="My orders" subtitle="Track, replace, or buy again" onPress={onOrders} /><ProfileRow icon="♥" title="Wishlist" subtitle={`${wishlistCount} saved ${wishlistCount === 1 ? "item" : "items"}`} onPress={onWishlist} /><ProfileRow icon="PIN" title="Addresses" subtitle="Add, edit, or choose your default" onPress={onAddresses} /><ProfileRow icon="PAY" title="Payments" subtitle="UPI apps and manual verification" /><ProfileRow icon="OFF" title="Coupons" subtitle="Your available offers" /><ProfileRow icon="NOT" title="Notifications" subtitle="View your notification history" onPress={onNotifications} last /></View>
+      <Text style={styles.profileLabel}>SUPPORT</Text>
+      <View style={styles.profileMenuCard}><ProfileRow icon="?" title="Help center" subtitle="Orders, refunds, and support" onPress={onHelp} /><ProfileRow icon="SET" title="Notification settings" subtitle="Choose which push alerts you receive" onPress={onNotificationSettings} /><ProfileRow icon="SON" title="About Sonman" subtitle="Local commerce, delivered with care" last /></View>
+      <Text style={styles.signOut} onPress={onLogout}>Logout</Text>
+    </ScreenScroll>
+  );
+}
+
+function EditProfile({ profile, onBack, onSaved }: { profile: UserProfile; onBack: () => void; onSaved: (profile: UserProfile) => void }) {
+  const initialDate = dateOfBirthParts(profile.date_of_birth);
+  const [fullName, setFullName] = useState(profile.full_name);
+  const [phone, setPhone] = useState(profile.phone ?? "");
+  const [gender, setGender] = useState(profile.gender ?? "");
+  const [birthDay, setBirthDay] = useState(initialDate.day);
+  const [birthMonth, setBirthMonth] = useState(initialDate.month);
+  const [birthYear, setBirthYear] = useState(initialDate.year);
+  const monthRef = useRef<TextInput>(null);
+  const yearRef = useRef<TextInput>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!fullName.trim()) return setError("Enter your full name.");
+    setBusy(true);
+    setError("");
+    try {
+      const dateOfBirth = normalizeDateOfBirth(birthDay, birthMonth, birthYear);
+      onSaved(await authService.updateProfile({ fullName, phone, gender, dateOfBirth }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Profile could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const digits = (value: string, length: number) => value.replace(/\D/g, "").slice(0, length);
+  return <ScreenScroll><PageHeader title="Edit profile" onBack={onBack} /><Text style={styles.formIntro}>Keep your account details up to date for smoother deliveries and support.</Text><View style={styles.editProfileCard}><Field label="Full name" placeholder="Your name" value={fullName} onChange={setFullName} /><Field label="Email address" placeholder="" value={profile.email ?? ""} /><Field label="Mobile number" placeholder="+91 00000 00000" value={phone} onChange={setPhone} /><Dropdown label="Gender" value={gender} placeholder="Choose gender" options={["Female", "Male", "Non-binary", "Prefer not to say"]} onChange={setGender} /><Text style={styles.fieldLabel}>Date of birth</Text><View style={styles.dobRow}><TextInput style={styles.dobField} placeholder="DD" placeholderTextColor={palette.muted} keyboardType="number-pad" maxLength={2} value={birthDay} onChangeText={(value) => { const next = digits(value, 2); setBirthDay(next); if (next.length === 2) monthRef.current?.focus(); }} /><TextInput ref={monthRef} style={styles.dobField} placeholder="MM" placeholderTextColor={palette.muted} keyboardType="number-pad" maxLength={2} value={birthMonth} onChangeText={(value) => { const next = digits(value, 2); setBirthMonth(next); if (next.length === 2) yearRef.current?.focus(); }} /><TextInput ref={yearRef} style={[styles.dobField, styles.dobYear]} placeholder="YYYY" placeholderTextColor={palette.muted} keyboardType="number-pad" maxLength={4} value={birthYear} onChangeText={(value) => setBirthYear(digits(value, 4))} /></View></View>{!!error && <Text style={styles.authError}>{error}</Text>}<PrimaryButton label={busy ? "Saving..." : "Save profile"} onPress={save} disabled={busy} /></ScreenScroll>;
+}
+
+function Addresses({ addresses, onBack, onAdd, onEdit, onDelete, onDefault }: { addresses: CustomerAddress[]; onBack: () => void; onAdd: () => void; onEdit: (address: CustomerAddress) => void; onDelete: (id: string) => Promise<void>; onDefault: (id: string) => Promise<void> }) {
+  const [error, setError] = useState("");
+  const run = async (action: () => Promise<void>) => {
+    try { setError(""); await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Address could not be updated."); }
+  };
+  return <ScreenScroll><PageHeader title="Saved addresses" onBack={onBack} /><PrimaryButton label="Add address" onPress={onAdd} />{!!error && <Text style={styles.authError}>{error}</Text>}{addresses.map((address) => <View key={address.id} style={styles.addressCard}><View style={styles.between}><Text style={styles.rowTitle}>{address.label}{address.isDefault ? "  DEFAULT" : ""}</Text><Text style={styles.link} onPress={() => onEdit(address)}>Edit</Text></View><Text style={styles.smallMuted}>{address.recipientName}</Text><Text style={styles.smallMuted}>{addressText(address)}</Text><View style={styles.addressActions}>{!address.isDefault && <Text style={styles.link} onPress={() => void run(() => onDefault(address.id))}>Set default</Text>}<Text style={styles.remove} onPress={() => void run(() => onDelete(address.id))}>Delete</Text></View></View>)}{!addresses.length && <Empty title="No saved addresses" subtitle="Add an address to use it automatically at checkout." />}</ScreenScroll>;
+}
+
+function AddressForm({ address, onBack, onSaved }: { address?: CustomerAddress; onBack: () => void; onSaved: () => Promise<void> }) {
+  const [input, setInput] = useState<AddressInput>({ label: address?.label ?? "", recipientName: address?.recipientName ?? "", line1: address?.line1 ?? "", line2: address?.line2 ?? "", city: address?.city ?? SERVICE_DISTRICTS[0], state: address?.state ?? SERVICE_STATES[0], postalCode: address?.postalCode ?? "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = (key: keyof AddressInput) => (value: string) => setInput((current) => ({ ...current, [key]: value }));
+  const save = async () => {
+    if (!input.label.trim() || !input.recipientName.trim() || !input.line1.trim() || !input.city.trim() || !input.state.trim() || !input.postalCode.trim()) return setError("Complete all required address fields.");
+    setBusy(true);
+    setError("");
+    try {
+      await createCustomerProfileService(authService.supabase).saveAddress(input, address?.id);
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Address could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <ScreenScroll><PageHeader title={address ? "Edit address" : "Add address"} onBack={onBack} /><Text style={styles.formIntro}>Sonman MVP deliveries are currently available in Kulgam, Jammu and Kashmir.</Text><Field label="Label" placeholder="Home or Work" value={input.label} onChange={set("label")} /><Field label="Recipient name" placeholder="Full name" value={input.recipientName} onChange={set("recipientName")} /><Field label="Address line 1" placeholder="House, building, street" value={input.line1} onChange={set("line1")} /><Field label="Address line 2" placeholder="Area or landmark (optional)" value={input.line2} onChange={set("line2")} /><Dropdown label="State" value={input.state} placeholder="Choose state" options={SERVICE_STATES} onChange={set("state")} /><Dropdown label="District" value={input.city} placeholder="Choose district" options={SERVICE_DISTRICTS} onChange={set("city")} /><Field label="Postal code" placeholder="Postal code" value={input.postalCode} onChange={set("postalCode")} />{!!error && <Text style={styles.authError}>{error}</Text>}<PrimaryButton label={busy ? "Saving..." : "Save address"} onPress={save} disabled={busy} /></ScreenScroll>;
+}
+
+function HelpCenter({ onBack }: { onBack: () => void }) {
+  return <ScreenScroll><PageHeader title="Help centre" onBack={onBack} /><Text style={styles.formIntro}>Answers for shopping, delivery, and order support.</Text>{[["Where do you deliver?", "For MVP, Sonman delivery is available in Kulgam district, Jammu and Kashmir."], ["How do I track an order?", "Open Orders and select the Active tab to view your latest order status."], ["Can I cancel an order?", "Orders are prepaid. Cancellation is not available after confirmation. Report damaged, defective, or incorrect products at delivery."], ["Need more help?", "Contact Sonman support and include your order number for faster help."]].map(([title, body]) => <View key={title} style={styles.helpCard}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.smallMuted}>{body}</Text></View>)}</ScreenScroll>;
+}
+
+function SearchBar({ placeholder = "Search products, categories, and more", value = "", onChange, suggestions = [] }: { placeholder?: string; value?: string; onChange?: (value: string) => void; suggestions?: string[] }) {
+  const [focused, setFocused] = useState(false);
+  const recent = ["dry fruits", "handicrafts"];
+  const popular = ["local deals", "top sellers", "new arrivals"];
+  const matches = value.trim() ? suggestions.filter((item) => item.toLowerCase().includes(value.trim().toLowerCase())).slice(0, 5) : [];
+  const options = matches.length ? matches : focused ? (value ? popular : [...recent, ...popular]) : [];
+  return <View style={styles.searchShell}><View style={styles.search}><Text style={styles.searchIcon}>⌕</Text><TextInput style={styles.searchInput} placeholder={placeholder} placeholderTextColor={palette.muted} value={value} onFocus={() => setFocused(true)} onBlur={() => setTimeout(() => setFocused(false), 150)} onChangeText={onChange} /><Text style={styles.searchAction}>MIC</Text><Text style={styles.searchAction}>CAM</Text></View>{!!options.length && <View style={styles.searchSuggestions}><Text style={styles.suggestionLabel}>{matches.length ? "SUGGESTIONS" : value ? "POPULAR SEARCHES" : "RECENT AND POPULAR"}</Text>{options.map((option) => <Text key={option} style={styles.suggestion} onPress={() => onChange?.(option)}>⌕  {option}</Text>)}</View>}</View>;
+}
+
+function CategoryChip({ name, icon, onPress }: { name: string; icon: string; onPress: () => void }) {
+  return <Pressable style={styles.chip} onPress={onPress}><Text style={styles.chipIcon}>{icon}</Text><Text style={styles.chipText}>{name}</Text></Pressable>;
+}
+
+function MarketplaceSection({ title, action, onPress, children }: { title: string; action: string; onPress: () => void; children: ReactNode }) {
+  return <View><SectionHeader title={title} action={action} onPress={onPress} />{children}</View>;
+}
+
+function CompactProduct({ product, onPress }: { product: Product; onPress: () => void }) {
+  return <Pressable style={styles.compactProduct} onPress={onPress}><Image source={{ uri: product.image }} style={styles.compactImage} /><Text style={styles.compactName} numberOfLines={2}>{product.name}</Text><Text style={styles.compactPrice}>{money(product.price)}</Text></Pressable>;
+}
+
+function VendorCard({ name, icon, rating, color }: { name: string; icon: string; rating: string; color: string }) {
+  return <Pressable style={styles.vendorCard}><View style={[styles.vendorLogo, { backgroundColor: color }]}><Text style={styles.vendorLogoText}>{icon}</Text></View><Text style={styles.vendorName}>{name}</Text><Text style={styles.vendorRating}>STAR {rating}</Text></Pressable>;
+}
+
+function ProductCard({ product, onPress, onWishlist, saved, width }: { product: Product; onPress: () => void; onWishlist?: () => void; saved?: boolean; width?: number }) {
+  return (
+    <Pressable style={[styles.productCard, width ? { width } : undefined]} onPress={onPress}>
+      <View><Image source={{ uri: product.image }} style={styles.productImage} /><Pressable style={styles.heartButton} hitSlop={8} onPress={(event) => { event.stopPropagation(); onWishlist?.(); }}><Text style={[styles.heart, saved && styles.heartSaved]}>{saved ? "♥" : "♡"}</Text></Pressable>{product.badge && <Text style={styles.badge}>{product.badge}</Text>}</View>
+      <View style={styles.productCopy}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.productName} numberOfLines={2}>{product.name}</Text><View style={styles.ratingLine}><Text style={styles.ratingSmall}>★ {product.rating}</Text><Text style={styles.reviewCount}>({product.reviews})</Text></View><View style={styles.priceLine}><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.oldPriceSmall}>{money(product.oldPrice)}</Text></View><Text style={styles.discount}>{discount(product)}% off</Text><Text style={styles.delivery}>{product.deliverySize === "large" || product.deliverySize === "heavy" ? "Delivery quote required" : "Standard delivery"}</Text></View>
+    </Pressable>
+  );
+}
+
+function CartItem({ product, quantity, onQuantity, onSaveLater }: { product: Product; quantity: number; onQuantity: (quantity: number) => void; onSaveLater: () => void }) {
+  return <View style={styles.cartItem}><Image source={{ uri: product.image }} style={styles.cartImage} /><View style={styles.flex}><Text style={styles.productCategory}>{product.category}</Text><Text style={styles.rowTitle} numberOfLines={2}>{product.name}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.cartDelivery}>{product.deliverySize === "small" ? "Standard local delivery" : "Delivery estimate at checkout"}</Text><View style={styles.cartFooter}><View style={styles.quantityRow}><Text style={styles.quantity} onPress={() => onQuantity(quantity - 1)}>−</Text><Text style={styles.quantity}>{quantity}</Text><Text style={styles.quantity} onPress={() => onQuantity(quantity + 1)}>+</Text></View><Text style={styles.remove} onPress={() => onQuantity(0)}>Delete</Text></View><Text style={styles.saveLater} onPress={onSaveLater}>Save for later</Text></View></View>;
+}
+
+function OrderTotal({ subtotal, deliveryFee }: { subtotal: number; deliveryFee?: number | null }) {
+  return <View style={styles.total}><View style={styles.between}><Text style={styles.smallMuted}>Subtotal</Text><Text style={styles.rowTitle}>{money(subtotal)}</Text></View><View style={styles.between}><Text style={styles.smallMuted}>Delivery</Text><Text style={styles.green}>{deliveryFee === undefined ? "Calculated at checkout" : deliveryFee === null ? "Manual quote" : money(deliveryFee)}</Text></View><View style={styles.divider} /><View style={styles.between}><Text style={styles.rowTitle}>Total</Text><Text style={styles.totalPrice}>{money(subtotal + (deliveryFee ?? 0))}</Text></View></View>;
+}
+
+function OrderCard({ title, code, products: items, active }: { title: string; code: string; products: Product[]; active?: boolean }) {
+  return <View style={styles.orderCard}><View style={styles.between}><Text style={styles.eyebrow}>{code}</Text><Text style={active ? styles.statusActive : styles.statusDelivered}>{active ? "IN TRANSIT" : "DELIVERED"}</Text></View><Text style={[styles.rowTitle, styles.orderTitle]}>{title}</Text><View style={styles.orderImages}>{items.map((item) => <Image key={item.id} source={{ uri: item.image }} style={styles.orderImage} />)}</View>{active && <View style={styles.progress}><View style={styles.progressDone} /></View>}<Pressable style={styles.track}><Text style={styles.trackText}>{active ? "Track order" : "View order details"}</Text></Pressable></View>;
+}
+
+function CheckoutSection({ icon, title, action, onAction, children }: { icon: string; title: string; action: string; onAction?: () => void; children: ReactNode }) {
+  return <View style={styles.checkoutCard}><View style={styles.checkoutHeader}><View style={styles.checkoutIcon}><Text style={styles.checkoutIconText}>{icon}</Text></View><Text style={styles.rowTitle}>{title}</Text><Text style={[styles.link, styles.flexEnd]} onPress={onAction}>{action}</Text></View><View style={styles.checkoutBody}>{children}</View></View>;
+}
+
+function ProfileDetail({ label, value, last }: { label: string; value: string; last?: boolean }) {
+  return <View style={[styles.profileDetail, last && styles.profileDetailLast]}><Text style={styles.profileDetailLabel}>{label}</Text><Text style={styles.profileDetailValue}>{value}</Text></View>;
+}
+
+function ProfileRow({ icon, title, subtitle, onPress, last }: { icon: string; title: string; subtitle: string; onPress?: () => void; last?: boolean }) {
+  return <Pressable style={[styles.profileRow, last && styles.profileRowLast]} onPress={onPress}><View style={styles.profileIcon}><Text style={styles.profileIconText}>{icon}</Text></View><View style={styles.flex}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.smallMuted}>{subtitle}</Text></View><Text style={styles.arrow}>›</Text></Pressable>;
+}
+
+function PageHeader({ title, onBack, action, onAction }: { title: string; onBack: () => void; action?: string; onAction?: () => void }) {
+  return <View style={styles.pageHeader}><Pressable style={styles.roundButton} onPress={onBack}><Text style={styles.roundButtonText}>‹</Text></Pressable><Text style={styles.headerTitle}>{title}</Text>{action ? <Text style={styles.headerAction} onPress={onAction}>{action}</Text> : <View style={styles.headerSpacer} />}</View>;
+}
+
+function SectionHeader({ title, action, onPress }: { title: string; action: string; onPress: () => void }) {
+  return <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.link} onPress={onPress}>{action}</Text></View>;
+}
+
+function Dropdown({ label, value, placeholder, options, onChange }: { label: string; value: string; placeholder: string; options: string[]; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return <View><Text style={styles.fieldLabel}>{label}</Text><Pressable style={styles.select} onPress={() => setOpen((current) => !current)}><Text style={value ? styles.selectText : styles.selectPlaceholder}>{value || placeholder}</Text><Text style={styles.chevron}>{open ? "^" : "v"}</Text></Pressable>{open && <View style={styles.selectMenu}>{options.map((option) => <Pressable key={option} style={styles.selectOption} onPress={() => { onChange(option); setOpen(false); }}><Text style={styles.selectText}>{option}</Text></Pressable>)}</View>}</View>;
+}
+
+function Field({ label, placeholder, secure, value, onChange }: { label: string; placeholder: string; secure?: boolean; value?: string; onChange?: (text: string) => void }) {
+  return <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.field} placeholder={placeholder} placeholderTextColor={palette.muted} secureTextEntry={secure} value={value} onChangeText={onChange} autoCapitalize="none" /></View>;
+}
+
+function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
+  return <Pressable style={[styles.primaryButton, disabled && styles.disabled]} onPress={onPress} disabled={disabled}><Text style={styles.primaryButtonText}>{label}</Text></Pressable>;
+}
+
+function Empty({ title, subtitle }: { title: string; subtitle: string }) {
+  return <View style={styles.empty}><Text style={styles.emptyIcon}>BAG</Text><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.body}>{subtitle}</Text></View>;
+}
+
+function SafeLayout({ children }: { children: ReactNode }) {
+  return (
+    <SafeAreaProvider>
+      <SafeAreaFrame>{children}</SafeAreaFrame>
+    </SafeAreaProvider>
+  );
+}
+
+function SafeAreaFrame({ children }: { children: ReactNode }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.safe, { paddingTop: insets.top }]}>
+      {children}
+    </View>
+  );
+}
+
+function ScreenScroll({ children }: { children: ReactNode; sticky?: boolean }) {
+  return <ScreenShell>{children}</ScreenShell>;
+}
+
+function ScreenShell({ children, contentContainerStyle }: { children: ReactNode; contentContainerStyle?: object }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, MIN_ANDROID_BOTTOM_INSET);
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.screenShell}
+      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+    >
+      <ExpoStatusBar style="dark" />
+      <ScrollView
+        contentContainerStyle={[
+          styles.screen,
+          { paddingBottom: BOTTOM_NAV_HEIGHT + bottomInset + 28 },
+          contentContainerStyle,
+        ]}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+      >
+        {children}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function BottomNav({ screen, count, onNavigate }: { screen: Screen; count: number; onNavigate: (screen: Screen) => void }) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, MIN_ANDROID_BOTTOM_INSET);
+  const nav = [["⌂", "Home", "home"], ["▦", "Categories", "categories"], ["🛒", "Cart", "cart"], ["▤", "Orders", "orders"], ["☻", "Account", "profile"]] as const;
+
+  return (
+    <View style={[styles.bottomNav, { height: BOTTOM_NAV_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
+      {nav.map(([icon, label, target]) => (
+        <Pressable key={target} hitSlop={10} style={styles.navItem} onPress={() => onNavigate(target)}>
+          <View>
+            <Text style={[styles.navIcon, screen === target && styles.navActive]}>{icon}</Text>
+            {target === "cart" && count > 0 && <Text style={styles.cartCount}>{count}</Text>}
+          </View>
+          <Text style={[styles.navLabel, screen === target && styles.navActive]}>{label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: palette.cream }, screenShell: { flex: 1, backgroundColor: palette.cream },
+  flex: { flex: 1 }, flexEnd: { marginLeft: "auto" }, between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, alignRight: { textAlign: "right" },
+  splashFade: { flex: 1 }, splash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F1E5" }, splashSky: { position: "absolute", left: 0, right: 0, bottom: 0, height: "48%", overflow: "hidden", backgroundColor: "#E4EEE6" }, splashSun: { position: "absolute", right: 42, top: 30, width: 62, height: 62, borderRadius: 31, backgroundColor: "#E9C984" }, splashLake: { position: "absolute", left: 0, right: 0, bottom: 0, height: 66, backgroundColor: "#B7D3CC" }, mountain: { position: "absolute", width: 300, height: 300, borderRadius: 42, transform: [{ rotate: "45deg" }] }, mountainFar: { left: 92, bottom: -118, backgroundColor: "#CBD9CD" }, mountainBack: { left: -65, bottom: -112, backgroundColor: "#9DBBAA" }, mountainFront: { right: -70, bottom: -145, backgroundColor: "#386F59" }, splashEyebrow: { color: palette.gold, fontSize: 11, fontWeight: "700", letterSpacing: 2, marginBottom: 18 }, brandMark: { width: 76, height: 76, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: palette.black, marginBottom: 16, elevation: 4, shadowColor: palette.black, shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, brandMarkText: { color: palette.goldPale, fontFamily: premiumFont, fontSize: 40, fontWeight: "700" }, logo: { color: palette.black, fontFamily: premiumFont, fontSize: 28, fontWeight: "800", letterSpacing: -1 }, splashLogo: { color: palette.black, fontFamily: premiumFont, fontSize: 40, fontWeight: "700", letterSpacing: 1 }, splashSlogan: { color: palette.green, fontSize: 17, fontWeight: "700", marginTop: 11 }, splashTag: { color: palette.muted, fontSize: 13, marginTop: 5 }, splashMarketCard: { position: "absolute", left: 24, right: 24, bottom: 34, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.90)" }, splashMarketIcon: { color: palette.gold, fontSize: 10, fontWeight: "700", letterSpacing: 1 }, splashMarketText: { color: palette.black, fontSize: 12, fontWeight: "600" },
+  onboarding: { flex: 1, justifyContent: "space-between", paddingHorizontal: 22 }, onboardingVisual: { height: "43%", overflow: "hidden", borderRadius: 30, backgroundColor: palette.sand }, fillImage: { width: "100%", height: "100%" }, floatingNote: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 8, alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.94)" }, noteText: { color: palette.black, fontSize: 12, fontWeight: "600" }, onboardingTitle: { color: palette.black, fontSize: 24, lineHeight: 30, fontWeight: "700" }, dots: { color: palette.gold, textAlign: "center", marginVertical: 12, letterSpacing: 4 },
+  auth: { gap: 14, paddingHorizontal: 24 }, authIntro: { gap: 7, marginTop: 58, marginBottom: 8 }, authTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 24, lineHeight: 30, fontWeight: "700" }, authError: { color: palette.red, fontSize: 12, lineHeight: 18 }, authDivider: { color: palette.muted, textAlign: "center", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, fieldLabel: { color: palette.black, fontSize: 12, fontWeight: "600", marginBottom: 7 }, field: { height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.white, marginBottom: 12 }, select: { height: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginBottom: 12 }, selectText: { color: palette.black, fontSize: 14 }, selectPlaceholder: { color: palette.muted, fontSize: 14 }, selectMenu: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: -7, marginBottom: 12 }, selectOption: { paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, google: { height: 54, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white }, googleText: { color: palette.black, fontSize: 14, fontWeight: "600" }, switchText: { color: palette.muted, textAlign: "center", fontSize: 12 },
+  screen: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, backgroundColor: palette.cream }, screenCompact: { paddingHorizontal: 12 }, body: { color: palette.muted, fontSize: 14, lineHeight: 21 }, smallMuted: { color: palette.muted, fontSize: 12, lineHeight: 18 }, tinyMuted: { color: palette.muted, fontSize: 12, lineHeight: 16 }, formIntro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginBottom: 16 }, helpCard: { gap: 5, padding: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginBottom: 10 }, link: { color: palette.gold, fontSize: 14, fontWeight: "600" }, gold: { color: palette.gold, fontSize: 12, fontWeight: "700" }, green: { color: palette.green, fontSize: 14, fontWeight: "600" }, eyebrow: { color: palette.muted, fontSize: 12, fontWeight: "600" }, pageTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 22, lineHeight: 28, fontWeight: "700", marginBottom: 8 }, homeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, marketHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 9 }, avatarSmall: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19, backgroundColor: palette.black }, avatarSmallText: { color: palette.goldPale, fontSize: 12, fontWeight: "700" },
+  searchShell: { paddingBottom: 12, backgroundColor: palette.cream }, search: { height: 50, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 14, backgroundColor: palette.white }, searchIcon: { color: palette.black, fontSize: 26, lineHeight: 28 }, searchInput: { flex: 1, color: palette.black, fontSize: 14 }, searchAction: { color: palette.gold, fontSize: 10, fontWeight: "700" }, searchSuggestions: { overflow: "hidden", borderWidth: 1, borderTopWidth: 0, borderColor: palette.line, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, backgroundColor: palette.white }, suggestionLabel: { color: palette.muted, fontSize: 10, fontWeight: "700", letterSpacing: 1, paddingHorizontal: 13, paddingTop: 10 }, suggestion: { color: palette.black, fontSize: 13, paddingHorizontal: 13, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line },
+  searchDock: { marginHorizontal: -14, paddingHorizontal: 14, backgroundColor: palette.cream }, location: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, marginBottom: 8 }, locationIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, locationLabel: { color: palette.black, fontSize: 12, fontWeight: "600" }, locationText: { color: palette.muted, fontSize: 12, marginTop: 1 }, chevron: { color: palette.muted, fontSize: 15, fontWeight: "600" }, aiPill: { flexDirection: "row", alignItems: "center", gap: 10, padding: 9, borderRadius: 15, backgroundColor: palette.goldPale, marginBottom: 11 }, aiBadge: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.white }, aiBadgeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, aiTitle: { color: palette.black, fontSize: 14, fontWeight: "600" }, arrow: { color: palette.muted, fontSize: 29, lineHeight: 30 }, horizontal: { marginBottom: 13 }, chip: { height: 39, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, marginRight: 8, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white }, chipIcon: { color: palette.gold, fontSize: 12, fontWeight: "600" }, chipText: { color: palette.black, fontSize: 12, fontWeight: "600" },
+  categoryRail: { gap: 7, paddingBottom: 12 }, categoryBubble: { width: 59, alignItems: "center", gap: 5 }, categoryCircle: { width: 50, height: 50, alignItems: "center", justifyContent: "center", borderRadius: 25 }, categoryCircleText: { color: palette.black, fontSize: 12, fontWeight: "700" }, categoryBubbleText: { color: palette.black, fontSize: 12, fontWeight: "600" }, offerRail: { gap: 10 }, offer: { height: 142, flexDirection: "row", overflow: "hidden", borderRadius: 17, padding: 15 }, offerKicker: { color: palette.gold, fontSize: 12, fontWeight: "600" }, offerTitle: { color: palette.black, fontSize: 20, lineHeight: 24, fontWeight: "700", marginTop: 7 }, offerAction: { color: palette.black, fontSize: 12, fontWeight: "600", marginTop: 10 }, offerImage: { width: 112, height: 142, marginVertical: -15, marginRight: -15 },
+  hero: { height: 215, overflow: "hidden", borderRadius: 25, backgroundColor: palette.black }, heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.46)" }, heroCopy: { position: "absolute", left: 18, top: 18 }, heroKicker: { color: palette.goldPale, fontSize: 12, fontWeight: "600" }, heroTitle: { color: palette.white, fontSize: 24, lineHeight: 30, fontWeight: "700", marginTop: 8 }, heroBody: { color: palette.white, fontSize: 14, marginTop: 7 }, heroButton: { alignSelf: "flex-start", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 14, backgroundColor: palette.white, marginTop: 15 }, heroButtonText: { color: palette.black, fontSize: 12, fontWeight: "600" },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 22, marginBottom: 12 }, sectionTitle: { color: palette.black, fontSize: 20, fontWeight: "700" }, sectionSpacing: { marginTop: 20 }, categoryGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 9 }, categoryMini: { width: "48.5%", minHeight: 72, flexDirection: "row", alignItems: "center", gap: 9, padding: 9, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, categoryIcon: { width: 39, height: 39, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: palette.sand }, categoryIconText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, categoryTitle: { color: palette.black, fontSize: 14, fontWeight: "600" },
+  pageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }, roundButton: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 19, backgroundColor: palette.white }, roundButtonText: { color: palette.black, fontSize: 30, lineHeight: 31, marginTop: -4 }, headerTitle: { maxWidth: "70%", flexShrink: 1, color: palette.black, fontSize: 24, fontWeight: "700" }, headerAction: { width: 38, color: palette.black, textAlign: "center", fontSize: 26 }, headerSpacer: { width: 38 }, categoryList: { gap: 10, marginTop: 18 }, categoryRow: { minHeight: 80, flexDirection: "row", alignItems: "center", gap: 13, padding: 10, borderWidth: 1, borderColor: palette.line, borderRadius: 19, backgroundColor: palette.white }, categoryLargeIcon: { width: 57, height: 57, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: palette.sand }, categoryLargeIconGold: { backgroundColor: palette.goldPale }, categoryLargeText: { color: palette.gold, fontSize: 12, fontWeight: "700" }, rowTitle: { color: palette.black, fontSize: 14, lineHeight: 19, fontWeight: "600" },
+  filterRail: { paddingBottom: 8 }, filter: { height: 35, justifyContent: "center", paddingHorizontal: 12, marginRight: 7, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, filterActive: { borderColor: palette.blue, backgroundColor: palette.bluePale }, filterText: { color: palette.black, fontSize: 12, fontWeight: "600" }, filterTextActive: { color: palette.blue }, filterPanel: { gap: 5, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 15, backgroundColor: palette.white, marginBottom: 9 }, filterPanelActions: { flexDirection: "row", justifyContent: "space-between", marginTop: 5 }, gridTop: { marginTop: 8 }, productGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 }, productRail: { gap: 10 }, productCard: { width: "48.5%", overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, productImage: { width: "100%", height: 126, backgroundColor: palette.sand }, productCopy: { padding: 8 }, heartButton: { position: "absolute", right: 6, top: 6, width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "rgba(255,255,255,0.94)" }, heart: { color: palette.black, textAlign: "center", fontSize: 18 }, heartSaved: { color: palette.red }, badge: { position: "absolute", left: 6, bottom: 6, overflow: "hidden", paddingHorizontal: 5, paddingVertical: 3, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 7, backgroundColor: palette.goldPale }, productCategory: { color: palette.muted, fontSize: 12, marginBottom: 2 }, productName: { minHeight: 34, color: palette.black, fontSize: 14, lineHeight: 17, fontWeight: "600" }, ratingLine: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 }, rating: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.white, fontSize: 12, fontWeight: "700", borderRadius: 8, backgroundColor: palette.green }, ratingSmall: { overflow: "hidden", paddingHorizontal: 5, paddingVertical: 2, color: palette.white, fontSize: 12, fontWeight: "700", borderRadius: 7, backgroundColor: palette.green }, reviewCount: { color: palette.muted, fontSize: 12 }, priceLine: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 }, productPrice: { color: palette.black, fontSize: 14, fontWeight: "700" }, oldPrice: { color: palette.muted, fontSize: 14, textDecorationLine: "line-through" }, oldPriceSmall: { color: palette.muted, fontSize: 12, textDecorationLine: "line-through" }, discount: { color: palette.green, fontSize: 12, fontWeight: "700", marginTop: 2 }, delivery: { color: palette.muted, fontSize: 12, marginTop: 4 },
+  compactRail: { gap: 9 }, compactProduct: { width: 104, padding: 6, borderWidth: 1, borderColor: palette.line, borderRadius: 12, backgroundColor: palette.white }, compactImage: { width: "100%", height: 78, borderRadius: 8, backgroundColor: palette.sand }, compactName: { minHeight: 30, color: palette.black, fontSize: 12, lineHeight: 15, fontWeight: "600", marginTop: 5 }, compactPrice: { color: palette.black, fontSize: 14, fontWeight: "700", marginTop: 3 }, vendorRail: { gap: 9 }, vendorCard: { width: 112, alignItems: "center", padding: 10, borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, vendorLogo: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24 }, vendorLogoText: { color: palette.black, fontSize: 12, fontWeight: "700" }, vendorName: { color: palette.black, fontSize: 12, fontWeight: "600", marginTop: 7 }, vendorRating: { color: palette.green, fontSize: 12, fontWeight: "600", marginTop: 3 },
+  detailImage: { height: 342, borderRadius: 24, backgroundColor: palette.sand }, imageCounter: { color: palette.muted, textAlign: "center", fontSize: 12, fontWeight: "600", marginVertical: 10 }, detailTitle: { color: palette.black, fontFamily: premiumFont, fontSize: 24, lineHeight: 30, fontWeight: "700", marginTop: 5 }, detailPrice: { color: palette.black, fontSize: 24, fontWeight: "700" }, deliveryCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 12, borderRadius: 16, backgroundColor: palette.greenPale, marginVertical: 16 }, deliveryIcon: { color: palette.green, fontSize: 12, fontWeight: "700" }, deliveryTitle: { color: palette.green, fontSize: 14, fontWeight: "600" }, sizeRow: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginTop: 11 }, size: { minWidth: 45, height: 42, alignItems: "center", justifyContent: "center", paddingHorizontal: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.white }, sizeActive: { borderColor: palette.black, backgroundColor: palette.black }, sizeText: { color: palette.black, fontSize: 14, fontWeight: "600" }, sizeTextActive: { color: palette.white }, actionRow: { flexDirection: "row", gap: 9, marginTop: 20 }, outlineButton: { flex: 1, height: 52, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.black, borderRadius: 16 }, outlineText: { color: palette.black, fontSize: 14, fontWeight: "600" }, darkButton: { flex: 1, height: 52, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.black }, darkButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, saveDetail: { color: palette.blue, textAlign: "center", fontSize: 14, fontWeight: "700", paddingVertical: 14 }, infoCard: { gap: 5, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 12 }, pincodeRow: { flexDirection: "row", alignItems: "center", gap: 12 }, pincodeInput: { flex: 1, height: 42, paddingHorizontal: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 11, color: palette.black }, viewer: { flex: 1, justifyContent: "center", backgroundColor: palette.black }, viewerHeader: { position: "absolute", top: 48, left: 20, right: 20, zIndex: 2, flexDirection: "row", justifyContent: "space-between" }, viewerCounter: { color: palette.white, fontSize: 14, fontWeight: "700" }, viewerClose: { color: palette.goldPale, fontSize: 14, fontWeight: "700" }, viewerSlide: { alignItems: "center", justifyContent: "center" }, viewerImage: { width: "100%", height: "78%" }, viewerHint: { position: "absolute", bottom: 42, alignSelf: "center", color: palette.white, fontSize: 12 },
+  deliveryBanner: { flexDirection: "row", alignItems: "center", gap: 9, padding: 11, borderRadius: 15, backgroundColor: palette.greenPale, marginVertical: 14 }, deliveryProgress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.white, marginTop: 7 }, deliveryProgressDone: { height: 5, borderRadius: 3, backgroundColor: palette.green }, couponCard: { gap: 4, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 4 }, cartItem: { flexDirection: "row", gap: 12, padding: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, cartImage: { width: 92, height: 120, borderRadius: 13, backgroundColor: palette.sand }, cartDelivery: { color: palette.green, fontSize: 12, fontWeight: "600", marginTop: 5 }, cartFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 }, quantityRow: { flexDirection: "row", gap: 5 }, quantity: { overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, color: palette.black, fontSize: 12, fontWeight: "600", borderRadius: 10, backgroundColor: palette.sand }, remove: { color: palette.red, fontSize: 12, fontWeight: "600" }, saveLater: { color: palette.blue, fontSize: 12, fontWeight: "600", marginTop: 8 }, total: { gap: 11, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13, marginBottom: 6 }, divider: { height: 1, backgroundColor: palette.line }, totalPrice: { color: palette.black, fontSize: 20, fontWeight: "700" },
+  primaryButton: { minHeight: 55, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderRadius: 17, backgroundColor: palette.black, marginVertical: 6 }, primaryButtonText: { color: palette.white, fontSize: 14, fontWeight: "600" }, secondaryButton: { minHeight: 52, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.white, marginVertical: 6 }, secondaryButtonText: { color: palette.red, fontSize: 14, fontWeight: "600" }, disabled: { opacity: 0.35 }, checkoutCard: { padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, checkoutHeader: { flexDirection: "row", alignItems: "center", gap: 9 }, checkoutIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: palette.sand }, checkoutIconText: { color: palette.gold, fontSize: 12, fontWeight: "600" }, checkoutBody: { gap: 3, paddingLeft: 43, paddingTop: 8 }, checkoutProduct: { flexDirection: "row", gap: 11, paddingTop: 12, marginTop: 10, borderTopWidth: 1, borderTopColor: palette.line }, checkoutProductImage: { width: 64, height: 72, borderRadius: 11, backgroundColor: palette.sand }, optionRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 6 }, optionPill: { overflow: "hidden", color: palette.muted, fontSize: 12, fontWeight: "600", paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: palette.line, borderRadius: 12 }, optionPillActive: { color: palette.blue, borderColor: palette.blue, backgroundColor: palette.bluePale }, inlineInput: { minHeight: 42, paddingHorizontal: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 11, color: palette.black }, notesInput: { minHeight: 66, paddingTop: 10, textAlignVertical: "top" }, upiPanel: { gap: 10, padding: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 14, backgroundColor: palette.greenPale }, upiBrand: { flexDirection: "row", alignItems: "center", gap: 10 }, upiMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: palette.green }, upiMarkText: { color: palette.white, fontSize: 13, fontWeight: "800" }, paymentAmount: { color: palette.black, fontSize: 22, fontWeight: "800" }, paymentOptions: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 2 }, paymentOption: { overflow: "hidden", color: palette.muted, fontSize: 12, fontWeight: "700", paddingHorizontal: 9, paddingVertical: 7, borderWidth: 1, borderColor: palette.line, borderRadius: 11, backgroundColor: palette.white }, paymentOptionActive: { color: "#002970", borderColor: "#00BAF2", backgroundColor: "#E6F7FF" }, paymentAssurance: { color: palette.green, fontSize: 12, lineHeight: 17, fontWeight: "600" }, trustRow: { flexDirection: "row", gap: 7, marginVertical: 8 }, trustBadge: { flex: 1, color: palette.green, textAlign: "center", fontSize: 11, lineHeight: 16, fontWeight: "700", padding: 9, borderRadius: 13, backgroundColor: palette.greenPale }, policyRow: { flexDirection: "row", gap: 10, padding: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginVertical: 8 }, checkbox: { width: 20, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.gold, borderRadius: 5 }, checkboxChecked: { backgroundColor: palette.gold }, checkboxMark: { color: palette.white, fontSize: 14, fontWeight: "700" }, policyText: { flex: 1, color: palette.muted, fontSize: 12, lineHeight: 18 }, policyLabel: { color: palette.gold, fontSize: 12, fontWeight: "700", marginTop: 10 },
+  tabs: { flexDirection: "row", gap: 22, marginTop: 19, borderBottomWidth: 1, borderBottomColor: palette.line }, tab: { color: palette.muted, fontSize: 14, fontWeight: "600", paddingBottom: 10 }, tabActive: { color: palette.black, fontSize: 14, fontWeight: "700", paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: palette.gold }, orderCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 13 }, orderTitle: { marginTop: 9 }, statusActive: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.gold, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.goldPale }, statusDelivered: { overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, color: palette.green, fontSize: 12, fontWeight: "700", borderRadius: 9, backgroundColor: palette.greenPale }, orderImages: { flexDirection: "row", gap: 7, marginTop: 10 }, orderImage: { width: 52, height: 56, borderRadius: 10 }, progress: { height: 5, overflow: "hidden", borderRadius: 3, backgroundColor: palette.line, marginTop: 14 }, progressDone: { width: "68%", height: 5, borderRadius: 3, backgroundColor: palette.gold }, track: { minHeight: 42, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line, borderRadius: 13, marginTop: 13 }, trackText: { color: palette.black, fontSize: 12, fontWeight: "600" },
+  profileCard: { flexDirection: "row", alignItems: "center", gap: 13, padding: 16, borderWidth: 1, borderColor: palette.line, borderRadius: 20, backgroundColor: palette.white, marginTop: 15 }, changeAvatar: { color: palette.blue, textAlign: "center", fontSize: 12, fontWeight: "700", marginTop: 9 }, profileDetailsCard: { overflow: "hidden", borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginTop: 12 }, profileDetail: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 15, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, profileDetailLast: { borderBottomWidth: 0 }, profileDetailLabel: { color: palette.muted, fontSize: 12, fontWeight: "600" }, profileDetailValue: { flexShrink: 1, color: palette.black, textAlign: "right", fontSize: 14, fontWeight: "600" }, profileMenuCard: { overflow: "hidden", paddingHorizontal: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white }, editProfileCard: { padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 18, backgroundColor: palette.white, marginBottom: 10 }, dobRow: { flexDirection: "row", gap: 9, marginBottom: 12 }, dobField: { flex: 1, height: 54, paddingHorizontal: 15, borderWidth: 1, borderColor: palette.line, borderRadius: 16, color: palette.black, backgroundColor: palette.cream }, dobYear: { flex: 1.45 }, avatar: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 29, backgroundColor: palette.black }, avatarText: { color: palette.goldPale, fontSize: 16, fontWeight: "700" }, profileName: { color: palette.black, fontFamily: premiumFont, fontSize: 20, fontWeight: "700" }, member: { color: palette.gold, fontSize: 12, fontWeight: "600", marginTop: 5 }, profileLabel: { color: palette.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1, marginTop: 22, marginBottom: 8 }, profileRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: palette.line }, profileRowLast: { borderBottomWidth: 0 }, profileIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.goldPale }, profileIconText: { color: palette.gold, fontSize: 11, fontWeight: "700" }, signOut: { color: palette.red, fontSize: 14, fontWeight: "600", marginTop: 24 }, addressCard: { gap: 4, padding: 14, borderWidth: 1, borderColor: palette.line, borderRadius: 16, backgroundColor: palette.white, marginTop: 10 }, addressActions: { flexDirection: "row", gap: 18, marginTop: 8 },
+  empty: { minHeight: 190, alignItems: "center", justifyContent: "center", gap: 7, paddingHorizontal: 20 }, emptyIcon: { color: palette.gold, fontSize: 12, fontWeight: "700" }, bottomNav: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: "row", alignItems: "flex-start", paddingTop: 10, borderTopWidth: 1, borderColor: palette.line, backgroundColor: palette.white, elevation: 8, shadowColor: palette.black, shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } }, navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 }, navIcon: { color: palette.muted, textAlign: "center", fontSize: 22, lineHeight: 24, fontWeight: "600" }, navLabel: { color: palette.muted, fontSize: 11, fontWeight: "500" }, navActive: { color: palette.blue }, navIndicator: { display: "none" }, cartCount: { position: "absolute", top: -7, right: -12, width: 15, height: 15, overflow: "hidden", color: palette.white, textAlign: "center", lineHeight: 15, fontSize: 9, fontWeight: "700", borderRadius: 8, backgroundColor: palette.red },
+
+  splashClean: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0B1220", overflow: "hidden" },
+  splashGlowOne: { position: "absolute", width: 330, height: 330, borderRadius: 165, backgroundColor: "rgba(245,158,11,0.16)", top: -80, right: -100 },
+  splashGlowTwo: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: "rgba(15,118,110,0.22)", bottom: -70, left: -80 },
+  splashLogoBox: { width: 96, height: 96, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#020617", borderWidth: 1, borderColor: "rgba(245,158,11,0.55)", shadowColor: palette.gold, shadowOpacity: 0.35, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 8 },
+  splashLogoS: { color: "#FEF3C7", fontSize: 56, fontWeight: "900", letterSpacing: -3 },
+  splashWord: { color: palette.white, fontSize: 56, fontWeight: "900", letterSpacing: -3, marginTop: 22, textTransform: "lowercase" },
+  splashLine: { color: palette.gold, fontSize: 15, fontWeight: "700", marginTop: 10 },
+  splashSubLine: { color: "#CBD5E1", fontSize: 13, marginTop: 6 },
+  homeScreen: { paddingHorizontal: 12, paddingTop: 10 },
+  appTopBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  locationMini: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  pinIcon: { color: palette.black, fontSize: 20 },
+  deliverSmall: { color: palette.black, fontSize: 14, fontWeight: "700" },
+  deliverText: { color: palette.muted, fontSize: 12, maxWidth: 250 },
+  profileIconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: palette.black },
+  profileMiniText: { color: palette.white, fontSize: 12, fontWeight: "800" },
+  quickCategoryRail: { gap: 12, paddingVertical: 10 },
+  quickCategory: { width: 70, alignItems: "center" },
+  quickCategoryIcon: { width: 58, height: 58, borderRadius: 18, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: palette.line },
+  quickCategoryEmoji: { fontSize: 24 },
+  quickCategoryText: { color: palette.black, fontSize: 12, textAlign: "center", marginTop: 6, fontWeight: "600" },
+  bannerRail: { gap: 10, paddingVertical: 8 },
+  bigBanner: { height: 150, borderRadius: 20, overflow: "hidden", flexDirection: "row", padding: 18, borderWidth: 1, borderColor: palette.line },
+  bannerContent: { flex: 1, justifyContent: "center" },
+  bannerKicker: { color: palette.gold, fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
+  bannerTitle: { color: palette.black, fontSize: 24, lineHeight: 29, fontWeight: "900", marginTop: 8, maxWidth: 230 },
+  bannerAction: { color: palette.green, fontSize: 15, fontWeight: "800", marginTop: 12 },
+  bannerProductImage: { width: 105, height: 120, borderRadius: 16, alignSelf: "center" },
+  serviceStrip: { flexDirection: "row", gap: 8, paddingVertical: 8, marginBottom: 4 },
+  serviceItem: { flex: 1, color: palette.black, fontSize: 11, fontWeight: "700", backgroundColor: palette.white, borderWidth: 1, borderColor: palette.line, borderRadius: 12, padding: 8, textAlign: "center" },
+
+});

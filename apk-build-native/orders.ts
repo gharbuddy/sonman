@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@sonman/auth-service";
+import type { AppliedCoupon } from "./coupons";
 
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "") ||
@@ -79,11 +80,19 @@ export const createCustomerOrdersService = (supabase: SupabaseClient) => ({
     if (error) throw error;
   },
 
-  async placeOrder(deliveryAddress: Record<string, unknown>, deliveryDistanceKm = 0, paymentReference?: string) {
+  async placeOrder(
+    deliveryAddress: Record<string, unknown>,
+    deliveryDistanceKm = 0,
+    paymentReference?: string,
+    coupon?: AppliedCoupon,
+  ) {
     await this.apiRequest("/api/v1/payments/upi/manual-confirm", {
       deliveryAddress,
       deliveryDistanceKm,
       paymentReference: paymentReference?.trim() || undefined,
+      couponCode: coupon?.code,
+      couponId: coupon?.id,
+      couponDiscountAmount: coupon?.discountAmount,
     });
   },
 
